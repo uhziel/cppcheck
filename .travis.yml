@@ -54,6 +54,14 @@ matrix:
       compiler: gcc
       script:
          - CXXFLAGS="-fsanitize=address -Og -g3" make cppcheck test checkcfg -j 2
+# Check Clang tests
+    - name: "check clang tests"
+      compiler: gcc
+      script:
+        - make MATCHCOMPILER=yes -O2 -j2
+        - wget https://releases.llvm.org/9.0.0/cfe-9.0.0.src.tar.xz
+        - tar xJvf cfe-9.0.0.src.tar.xz
+        - ./cppcheck --platform=unix64 cfe-9.0.0/test
 # check a lot of stuff that only needs to be checked in a single configuration
     - name: "misc"
       compiler: clang
