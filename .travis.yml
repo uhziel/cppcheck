@@ -61,7 +61,9 @@ matrix:
         - make -s
         - wget https://releases.llvm.org/9.0.0/cfe-9.0.0.src.tar.xz
         - tar xJf cfe-9.0.0.src.tar.xz
-        - ./cppcheck --platform=unix64 cfe-9.0.0.src/test
+        # Cppcheck hangs on this file, remove it. There are templates with 10^10 types.
+        - rm cfe-9.0.0.src/test/CodeGenCXX/mangle-ms-back-references-pr13207.cpp
+        - ./cppcheck --platform=unix64 cfe-9.0.0.src/test --suppressions-list=.travis_llvmcheck_suppressions
 # check a lot of stuff that only needs to be checked in a single configuration
     - name: "misc"
       compiler: clang

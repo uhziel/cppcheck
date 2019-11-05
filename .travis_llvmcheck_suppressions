@@ -1,8 +1,12 @@
-unreadVariable
+# suppress normal check warnings. Keep parsing warnings; syntaxError, AST errors, internal errors, etc
+arrayIndexOutOfBounds
+memleak
+noExplicitConstructor
+nullPointer
 shadowVar
 shadowFunction
-unusedStructMember
-nullPointer
 uninitvar
-noExplicitConstructor
+unreadVariable
+unusedStructMember
+zerodiv
 
