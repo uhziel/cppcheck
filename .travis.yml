@@ -58,10 +58,10 @@ matrix:
     - name: "check clang tests"
       compiler: gcc
       script:
-        - make
+        - make -s
         - wget https://releases.llvm.org/9.0.0/cfe-9.0.0.src.tar.xz
-        - tar xJvf cfe-9.0.0.src.tar.xz
-        - ./cppcheck --platform=unix64 cfe-9.0.0/test
+        - tar xJf cfe-9.0.0.src.tar.xz
+        - ./cppcheck --platform=unix64 cfe-9.0.0.src/test
 # check a lot of stuff that only needs to be checked in a single configuration
     - name: "misc"
       compiler: clang
