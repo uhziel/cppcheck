@@ -141,6 +141,7 @@ private:
         TEST_CASE(danglingLifetimeInitList);
         TEST_CASE(danglingLifetimeImplicitConversion);
         TEST_CASE(danglingTemporaryLifetime);
+		TEST_CASE(danglingTemporaryLifetime2);
         TEST_CASE(invalidLifetime);
         TEST_CASE(deadPointer);
     }
@@ -2502,6 +2503,66 @@ private:
             "[test.cpp:3] -> [test.cpp:4]: (error) Using iterator to temporary.\n",
             errout.str());
     }
+
+	void danglingTemporaryLifetime2() {
+		check(
+			"class A { public: int i; int* GetValue() {return &i;} };\n"
+			"A GetA() { return A(); }\n"
+			"void func(int* p) { (*p) += 1; }\n"
+			"int main1()\n"
+			"{\n"
+			"   int* v = GetA().GetValue();\n"
+			"   func(v);\n"
+			"   return 0;\n"
+			"}\n"
+		);
+		ASSERT_EQUALS(
+			"[test.cpp:6]: (error) The token returns a object and returned object calls a method.\n",
+			errout.str());
+
+		check(
+			"class A { public: int i; int* GetValue() {return &i;} };\n"
+			"A GetA() { return A(); }\n"
+			"void func(int* p) { (*p) += 1; }\n"
+			"int main1()\n"
+			"{\n"
+			"   int* v = A().GetValue();\n"
+			"   func(v);\n"
+			"   return 0;\n"
+			"}\n"
+		);
+		ASSERT_EQUALS(
+			"[test.cpp:6]: (error) The token returns a object and returned object calls a method.\n",
+			errout.str());
+
+		check(
+			"class A { public: int i; int* GetValue() {return &i;} };\n"
+			"A GetA() { return A(); }\n"
+			"void func(int* p) { (*p) += 1; }\n"
+			"int main1()\n"
+			"{\n"
+			"   func(GetA().GetValue());\n"
+			"   return 0;\n"
+			"}\n"
+		);
+		ASSERT_EQUALS(
+			"",
+			errout.str());
+
+		check(
+			"class A { public: int i; int* GetValue() {return &i;} };\n"
+			"A GetA() { return A(); }\n"
+			"void func(int* p) { (*p) += 1; }\n"
+			"int main1()\n"
+			"{\n"
+			"   func(A().GetValue());\n"
+			"   return 0;\n"
+			"}\n"
+		);
+		ASSERT_EQUALS(
+			"",
+			errout.str());
+	}
 
     void invalidLifetime() {
         check("void foo(int a) {\n"

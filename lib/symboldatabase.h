@@ -871,6 +871,7 @@ public:
     static bool argsMatch(const Scope *scope, const Token *first, const Token *second, const std::string &path, nonneg int path_length);
 
     static bool returnsReference(const Function* function, bool unknown = false);
+	static bool returnsRefOrPointer(const Function* function);
 
     const Token* returnDefEnd() const {
         if (this->hasTrailingReturnType()) {

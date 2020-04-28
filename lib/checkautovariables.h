@@ -70,6 +70,7 @@ private:
     void errorReturnAddressToAutoVariable(const Token *tok);
     void errorReturnAddressToAutoVariable(const Token *tok, const ValueFlow::Value *value);
     void errorReturnPointerToLocalArray(const Token *tok);
+	void errorDanglingTemporaryLifetime(const Token *tok);
     void errorAutoVariableAssignment(const Token *tok, bool inconclusive);
     void errorReturnDanglingLifetime(const Token *tok, const ValueFlow::Value* val);
     void errorInvalidLifetime(const Token *tok, const ValueFlow::Value* val);

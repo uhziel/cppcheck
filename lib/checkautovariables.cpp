@@ -501,7 +501,29 @@ void CheckAutoVariables::checkVarLifetimeScope(const Token * start, const Token 
                 errorDanglingReference(tok, var, errorPath);
                 continue;
             }
-        }
+		} else if (Token::simpleMatch(tok->astParent(), "(")
+			&& Token::simpleMatch(tok->astParent()->astParent(), ".")) { // Token is a function to return a object and returned object call a method.
+			const ::Type *retType = nullptr;
+			if (tok->tokType() == Token::eFunction) {
+				retType = tok->function()->retType;
+			} else if (tok->tokType() == Token::eType) {
+				retType = tok->type();
+			}
+			
+			if (retType && retType->isClassType()) {
+				const Token* calledMethodToken = tok->astParent()->astParent()->astOperand2();
+				if (calledMethodToken && calledMethodToken->tokType() == Token::eFunction
+					&& Token::simpleMatch(calledMethodToken->next(), "(")) {
+					if (Function::returnsRefOrPointer(calledMethodToken->function())) {
+						if (calledMethodToken->next() && calledMethodToken->next()->astParent() &&
+							calledMethodToken->next()->astParent()->str() == "=") {
+							errorDanglingTemporaryLifetime(tok);
+						}
+					}
+				}
+			}
+		}
+
         for (const ValueFlow::Value& val:tok->values()) {
             if (!val.isLocalLifetimeValue())
                 continue;
@@ -596,6 +618,11 @@ void CheckAutoVariables::errorDanglingTemporaryLifetime(const Token* tok, const 
     std::string msg = "Using " + lifetimeMessage(tok, val, errorPath);
     errorPath.emplace_back(tok, "");
     reportError(errorPath, Severity::error, "danglingTemporaryLifetime", msg + " to temporary.", CWE562, inconclusive);
+}
+
+void CheckAutoVariables::errorDanglingTemporaryLifetime(const Token *tok)
+{
+	reportError(tok, Severity::error, "danglingTemporaryLifetime", "The token returns a object and returned object calls a method.", CWE562, false);
 }
 
 void CheckAutoVariables::errorDanglngLifetime(const Token *tok, const ValueFlow::Value *val)

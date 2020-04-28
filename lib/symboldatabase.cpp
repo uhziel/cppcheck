@@ -2285,6 +2285,19 @@ bool Function::returnsReference(const Function* function, bool unknown)
     return false;
 }
 
+bool Function::returnsRefOrPointer(const Function* function)
+{
+	if (!function)
+		return false;
+	if (function->type != Function::eFunction)
+		return false;
+	const Token* defEnd = function->returnDefEnd();
+	if (defEnd->strAt(-1) == "&" || defEnd->strAt(-1) == "*")
+		return true;
+
+	return false;
+}
+
 const Token * Function::constructorMemberInitialization() const
 {
     if (!isConstructor() || !functionScope || !functionScope->bodyStart)
@@ -4628,14 +4641,26 @@ const Function* SymbolDatabase::findFunction(const Token *tok) const
                 return var->typeScope()->findFunction(tok, var->valueType()->constness == 1);
             if (var && var->smartPointerType() && var->smartPointerType()->classScope && tok1->next()->originalName() == "->")
                 return var->smartPointerType()->classScope->findFunction(tok, var->valueType()->constness == 1);
-        } else if (Token::simpleMatch(tok->previous()->astOperand1(), "(")) {
-            const Token *castTok = tok->previous()->astOperand1();
-            if (castTok->isCast()) {
-                ValueType vt = ValueType::parseDecl(castTok->next(),mSettings);
-                if (vt.typeScope)
-                    return vt.typeScope->findFunction(tok, vt.constness == 1);
-            }
-        }
+		} else if (Token::simpleMatch(tok->previous()->astOperand1(), "(")) {
+			const Token *castTok = tok->previous()->astOperand1();
+			if (castTok->isCast()) {
+				ValueType vt = ValueType::parseDecl(castTok->next(),mSettings);
+				if (vt.typeScope)
+					return vt.typeScope->findFunction(tok, vt.constness == 1);
+			} else if (castTok->valueType()) {
+				const ValueType *objType = castTok->valueType();
+				if (objType && objType->typeScope)
+				{
+					return objType->typeScope->findFunction(tok, objType->constness);
+				}
+			} else if (castTok->astOperand1()) {
+				const Token * objTok = castTok->astOperand1();
+				if (objTok && objTok->type() && objTok->type()->isClassType())
+				{
+					return objTok->type()->classScope->findFunction(tok, 1);
+				}
+			}
+		}
     }
 
     // check in enclosing scopes
