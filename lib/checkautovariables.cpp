@@ -504,13 +504,16 @@ void CheckAutoVariables::checkVarLifetimeScope(const Token * start, const Token 
 		} else if (Token::simpleMatch(tok->astParent(), "(")
 			&& Token::simpleMatch(tok->astParent()->astParent(), ".")) { // Token is a function to return a object and returned object call a method.
 			const ::Type *retType = nullptr;
+			bool returnValueIsRefOrPointer = true;
 			if (tok->tokType() == Token::eFunction) {
 				retType = tok->function()->retType;
+				returnValueIsRefOrPointer = Function::returnsRefOrPointer(tok->function());
 			} else if (tok->tokType() == Token::eType) {
 				retType = tok->type();
+				returnValueIsRefOrPointer = false;
 			}
 			
-			if (retType && retType->isClassType()) {
+			if (retType && retType->isClassType() && !returnValueIsRefOrPointer) {
 				const Token* calledMethodToken = tok->astParent()->astParent()->astOperand2();
 				if (calledMethodToken && calledMethodToken->tokType() == Token::eFunction
 					&& Token::simpleMatch(calledMethodToken->next(), "(")) {
