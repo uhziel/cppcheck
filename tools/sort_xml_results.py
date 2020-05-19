@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# via https://effbot.org/zone/element-sort.htm
 
 import xml.etree.ElementTree as ET
 import sys
