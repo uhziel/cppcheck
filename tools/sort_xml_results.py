@@ -17,7 +17,7 @@ tree = ET.parse(RESULT_XML)
 
 def getkey(elem):
     location = elem.find("location")
-    return (location.get("file"), location.get("line"), location.get("column"), elem.get("id"), elem.get("msg"))
+    return (location.get("file"), elem.get("id"), int(location.get("line")), int(location.get("column")), elem.get("msg"))
 
 container = tree.find("errors")
 
