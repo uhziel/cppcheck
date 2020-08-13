@@ -65,6 +65,27 @@ static void addFilesToList(const std::string& fileList, std::vector<std::string>
     }
 }
 
+static void addFilesToProjectWhitelist(const std::string& fileList, std::vector<std::string>& pathNames)
+{
+    // To keep things initially simple, if the file can't be opened, just be silent and move on.
+    std::istream *files = nullptr;
+    std::ifstream infile;
+    infile.open(fileList);
+    files = &infile;
+
+    if (files && *files) {
+        std::string fileName;
+        while (std::getline(*files, fileName)) { // next line
+            if (!fileName.empty()) {
+                fileName = Path::removeQuotationMarks(fileName);
+                fileName = Path::fromNativeSeparators(fileName);
+                fileName = Path::simplifyPath(fileName);
+                pathNames.push_back(fileName);
+            }
+        }
+    }
+}
+
 static bool addIncludePathsToList(const std::string& fileList, std::list<std::string>* pathNames)
 {
     std::ifstream files(fileList);
@@ -506,6 +527,12 @@ bool CmdLineParser::parseFromArgs(int argc, const char* const argv[])
                 addFilesToList(12 + argv[i], mPathNames);
             }
 
+            // the whitelist of project files
+            else if (std::strncmp(argv[i], "--project-whitelist=", 20) == 0) {
+                // open this file and read every input file (1 file name per line)
+                addFilesToProjectWhitelist(20 + argv[i], mProjectWhitelistPaths);
+            }
+
             // Ignored paths
             else if (std::strncmp(argv[i], "-i", 2) == 0) {
                 std::string path;
@@ -899,6 +926,10 @@ bool CmdLineParser::parseFromArgs(int argc, const char* const argv[])
     }
 
     mSettings->project.ignorePaths(mIgnoredPaths);
+    if (!mProjectWhitelistPaths.empty())
+    {
+        mSettings->project.filterPaths(mProjectWhitelistPaths);
+    }
 
     if (mSettings->force || maxconfigs)
         mSettings->checkAllConfigurations = true;
@@ -1014,6 +1045,9 @@ void CmdLineParser::printHelp()
               "    --file-list=<file>   Specify the files to check in a text file. Add one\n"
               "                         filename per line. When file is '-,' the file list will\n"
               "                         be read from standard input.\n"
+              "    --project-whitelist=<file>\n"
+              "                         Specify the whitelist of project files.\n"
+              "                         Add one filename per line.\n"
               "    -f, --force          Force checking of all configurations in files. If used\n"
               "                         together with '--max-configs=', the last option is the\n"
               "                         one that is effective.\n"

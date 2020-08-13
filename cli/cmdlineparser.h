@@ -109,6 +109,7 @@ protected:
 private:
     std::vector<std::string> mPathNames;
     std::vector<std::string> mIgnoredPaths;
+    std::vector<std::string> mProjectWhitelistPaths;
     Settings *mSettings;
     bool mShowHelp;
     bool mShowVersion;

@@ -58,6 +58,24 @@ void ImportProject::ignorePaths(const std::vector<std::string> &ipaths)
     }
 }
 
+void ImportProject::filterPaths(const std::vector<std::string> &whitelistPaths)
+{
+    for (std::list<FileSettings>::iterator it = fileSettings.begin(); it != fileSettings.end();) {
+        bool save = false;
+        for (std::string i : whitelistPaths) {
+            if (it->filename == i)
+            {
+                save = true;
+                break;
+            }
+        }
+        if (!save)
+            fileSettings.erase(it++);
+        else
+            ++it;
+    }
+}
+
 void ImportProject::ignoreOtherConfigs(const std::string &cfg)
 {
     for (std::list<FileSettings>::iterator it = fileSettings.begin(); it != fileSettings.end();) {
