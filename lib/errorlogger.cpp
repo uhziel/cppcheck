@@ -184,6 +184,7 @@ ErrorLogger::ErrorMessage::ErrorMessage(const tinyxml2::XMLElement * const errms
             callStack.emplace_back(file, info, line, column);
         }
     }
+    callStack.reverse();
 }
 
 void ErrorLogger::ErrorMessage::setmsg(const std::string &msg)
