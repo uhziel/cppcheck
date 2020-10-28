@@ -1084,9 +1084,27 @@ bool ImportProject::importCppcheckGuiProject(std::istream &istr, Settings *setti
     return true;
 }
 
+bool _sortFileSettings(const ImportProject::FileSettings& l, const ImportProject::FileSettings& r) {
+	int filenameResult = l.filename.compare(r.filename);
+	int cfgResult = l.cfg.compare(r.cfg);
+
+	if (filenameResult != 0)
+	{
+		return filenameResult < 0;
+	}
+	else if (cfgResult != 0) {
+		return cfgResult > 0;
+	}
+	else if (l.platformType != r.platformType) {
+		return l.platformType < r.platformType;
+	}
+	return false;
+}
+
 void ImportProject::selectOneVsConfig(Settings::PlatformType platform)
 {
     std::set<std::string> filenames;
+	fileSettings.sort(_sortFileSettings);
     for (std::list<ImportProject::FileSettings>::iterator it = fileSettings.begin(); it != fileSettings.end();) {
         if (it->cfg.empty()) {
             ++it;
@@ -1094,7 +1112,7 @@ void ImportProject::selectOneVsConfig(Settings::PlatformType platform)
         }
         const ImportProject::FileSettings &fs = *it;
         bool remove = false;
-        if (fs.cfg.compare(0,5,"Debug") != 0)
+        if (fs.cfg.compare(0,5,"Debug") != 0 && fs.cfg.compare(0, 13, "service_debug") != 0)
             remove = true;
         if (platform == Settings::Win64 && fs.platformType != platform)
             remove = true;
