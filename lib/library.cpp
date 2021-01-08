@@ -659,6 +659,12 @@ Library::Error Library::loadFunction(const tinyxml2::XMLElement * const node, co
                     mUnknownReturnValues[name] = values;
                 }
             }
+			if (const char *possibleValues = functionnode->Attribute("possibleValues")) {
+				if (std::strcmp(possibleValues, "NULL") == 0) {
+					std::vector<MathLib::bigint> values{ 0 };
+					mPossibleValues[name] = values;
+				}
+			}
         } else if (functionnodename == "arg") {
             const char* argNrString = functionnode->Attribute("nr");
             if (!argNrString)
@@ -1247,6 +1253,14 @@ std::vector<MathLib::bigint> Library::unknownReturnValues(const Token *ftok) con
         return std::vector<MathLib::bigint>();
     const std::map<std::string, std::vector<MathLib::bigint>>::const_iterator it = mUnknownReturnValues.find(getFunctionName(ftok));
     return (it == mUnknownReturnValues.end()) ? std::vector<MathLib::bigint>() : it->second;
+}
+
+std::vector<MathLib::bigint> Library::possibleValues(const Token *ftok) const
+{
+	if (isNotLibraryFunction(ftok))
+		return std::vector<MathLib::bigint>();
+	const std::map<std::string, std::vector<MathLib::bigint>>::const_iterator it = mPossibleValues.find(getFunctionName(ftok));
+	return (it == mPossibleValues.end()) ? std::vector<MathLib::bigint>() : it->second;
 }
 
 bool Library::hasminsize(const Token *ftok) const

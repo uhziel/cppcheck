@@ -5137,12 +5137,13 @@ static void valueFlowSubFunction(TokenList* tokenlist, ErrorLogger* errorLogger,
         if (!Token::Match(tok, "%name% ("))
             continue;
 
+		// library function?
+		const std::string& returnValue(settings->library.returnValue(tok));
+		if (!returnValue.empty())
+			valueFlowLibraryFunction(tok->next(), returnValue, settings);
+
         const Function * const calledFunction = tok->function();
         if (!calledFunction) {
-            // library function?
-            const std::string& returnValue(settings->library.returnValue(tok));
-            if (!returnValue.empty())
-                valueFlowLibraryFunction(tok->next(), returnValue, settings);
             continue;
         }
 
@@ -6073,6 +6074,24 @@ static void valueFlowUnknownFunctionReturn(TokenList *tokenlist, const Settings 
     }
 }
 
+static void valueFlowPossibleValuesFunctionReturn(TokenList *tokenlist, const Settings *settings)
+{
+	for (Token *tok = tokenlist->front(); tok; tok = tok->next()) {
+		if (!tok->astParent() || tok->str() != "(")
+			continue;
+		if (!Token::Match(tok->previous(), "%name%"))
+			continue;
+
+		std::vector<MathLib::bigint> possibleValues = settings->library.possibleValues(tok->astOperand1());
+		if (possibleValues.empty())
+			continue;
+
+		for (MathLib::bigint value : possibleValues) {
+			setTokenValue(const_cast<Token *>(tok), ValueFlow::Value(value), settings);
+		}
+	}
+}
+
 ValueFlow::Value::Value(const Token* c, long long val)
     : valueType(INT),
       bound(Bound::Point),
@@ -6143,6 +6162,7 @@ void ValueFlow::setValues(TokenList *tokenlist, SymbolDatabase* symboldatabase, 
     valueFlowString(tokenlist);
     valueFlowArray(tokenlist);
     valueFlowUnknownFunctionReturn(tokenlist, settings);
+	valueFlowPossibleValuesFunctionReturn(tokenlist, settings);
     valueFlowGlobalConstVar(tokenlist, settings);
     valueFlowGlobalStaticVar(tokenlist, settings);
     valueFlowPointerAlias(tokenlist);
