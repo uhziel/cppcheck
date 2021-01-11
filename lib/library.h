@@ -174,6 +174,7 @@ public:
 
     // returns true if ftok is not a library function
     bool isNotLibraryFunction(const Token *ftok) const;
+	bool isNotLibraryFunction2(const Token *ftok) const;
     bool matchArguments(const Token *ftok, const std::string &functionName) const;
 
     bool isUseRetVal(const Token* ftok) const;

@@ -1151,6 +1151,20 @@ bool Library::isNotLibraryFunction(const Token *ftok) const
     return !matchArguments(ftok, getFunctionName(ftok));
 }
 
+// returns true if ftok is not a library function
+bool Library::isNotLibraryFunction2(const Token *ftok) const
+{
+	if (ftok->function() && ftok->function()->nestedIn
+		&& ftok->function()->nestedIn == ftok->scope())
+		return true;
+
+	// variables are not library functions.
+	if (ftok->varId())
+		return true;
+
+	return !matchArguments(ftok, getFunctionName(ftok));
+}
+
 bool Library::matchArguments(const Token *ftok, const std::string &functionName) const
 {
     const int callargs = numberOfArguments(ftok);
@@ -1257,8 +1271,9 @@ std::vector<MathLib::bigint> Library::unknownReturnValues(const Token *ftok) con
 
 std::vector<MathLib::bigint> Library::possibleValues(const Token *ftok) const
 {
-	if (isNotLibraryFunction(ftok))
+	if (isNotLibraryFunction2(ftok))
 		return std::vector<MathLib::bigint>();
+
 	const std::map<std::string, std::vector<MathLib::bigint>>::const_iterator it = mPossibleValues.find(getFunctionName(ftok));
 	return (it == mPossibleValues.end()) ? std::vector<MathLib::bigint>() : it->second;
 }

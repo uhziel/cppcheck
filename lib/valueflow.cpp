@@ -6082,7 +6082,7 @@ static void valueFlowPossibleValuesFunctionReturn(TokenList *tokenlist, const Se
 		if (!Token::Match(tok->previous(), "%name%"))
 			continue;
 
-		std::vector<MathLib::bigint> possibleValues = settings->library.possibleValues(tok->astOperand1());
+		std::vector<MathLib::bigint> possibleValues = settings->library.possibleValues(tok->previous());
 		if (possibleValues.empty())
 			continue;
 
