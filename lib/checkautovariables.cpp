@@ -590,6 +590,7 @@ void CheckAutoVariables::checkVarLifetimeScope(const Token * start, const Token 
 					}
 				}
 			}
+            // Reference to temporary
         } else if (tok->variable() && (tok->variable()->isReference() || tok->variable()->isRValueReference())) {
             for (const LifetimeToken& lt : getLifetimeTokens(getParentLifetime(tok))) {
                 if (!printInconclusive && lt.inconclusive)
