@@ -108,3 +108,5 @@ man/manual.tex
 # CLion
 .idea
 /.metadata/
+
+.vscode
