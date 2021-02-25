@@ -217,6 +217,9 @@
     <ClCompile Include="testexprengine.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="testutils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="options.h">
@@ -241,6 +244,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\lib\config.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="precompiled.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,12 +19,15 @@
 #ifndef PROJECT_FILE_H
 #define PROJECT_FILE_H
 
+#include <map>
 #include <QObject>
 #include <QString>
 #include <QStringList>
 #include <QXmlStreamReader>
 
 #include "suppressions.h"
+
+#include <settings.h>
 
 /// @addtogroup GUI
 /// @{
@@ -41,6 +44,16 @@ class ProjectFile : public QObject {
 public:
     explicit ProjectFile(QObject *parent = nullptr);
     explicit ProjectFile(const QString &filename, QObject *parent = nullptr);
+    ~ProjectFile() {
+        if (this == mActiveProject) mActiveProject = nullptr;
+    }
+
+    static ProjectFile* getActiveProject() {
+        return mActiveProject;
+    }
+    void setActiveProject() {
+        mActiveProject = this;
+    }
 
     /**
      * @brief Read the project file.
@@ -125,6 +138,14 @@ public:
     }
 
     /**
+    * @brief Get list of paths to exclude from the check.
+    * @return list of paths.
+    */
+    QStringList getVsConfigurations() const {
+        return mVsConfigurations;
+    }
+
+    /**
     * @brief Get list libraries.
     * @return list of libraries.
     */
@@ -155,6 +176,13 @@ public:
     QStringList getAddons() const {
         return mAddons;
     }
+
+    /**
+    * @brief Get path to addon python script
+    * @param filesDir Data files folder set by --data-dir
+    * @param addon addon i.e. "misra" to lookup
+    */
+    static QString getAddonFilePath(QString filesDir, const QString &addon);
 
     /**
     * @brief Get list of addons and tools.
@@ -188,6 +216,34 @@ public:
 
     void setMaxCtuDepth(int maxCtuDepth) {
         mMaxCtuDepth = maxCtuDepth;
+    }
+
+    int getMaxTemplateRecursion() const {
+        return mMaxTemplateRecursion;
+    }
+
+    void setMaxTemplateRecursion(int maxTemplateRecursion) {
+        mMaxTemplateRecursion = maxTemplateRecursion;
+    }
+
+    const std::map<std::string,std::string>& getFunctionContracts() const {
+        return mFunctionContracts;
+    }
+
+    const std::map<QString, Settings::VariableContracts>& getVariableContracts() const {
+        return mVariableContracts;
+    }
+
+    void setVariableContracts(QString var, QString min, QString max) {
+        mVariableContracts[var] = Settings::VariableContracts{min.toStdString(), max.toStdString()};
+    }
+
+    void deleteFunctionContract(QString function) {
+        mFunctionContracts.erase(function.toStdString());
+    }
+
+    void deleteVariableContract(QString var) {
+        mVariableContracts.erase(var);
     }
 
     /**
@@ -254,6 +310,9 @@ public:
      */
     void setLibraries(const QStringList &libraries);
 
+    /** Set contract for a function */
+    void setFunctionContract(QString function, QString expects);
+
     /**
      * @brief Set platform.
      * @param platform platform.
@@ -266,11 +325,19 @@ public:
      */
     void setSuppressions(const QList<Suppressions::Suppression> &suppressions);
 
+    /** Add suppression */
+    void addSuppression(const Suppressions::Suppression &suppression);
+
     /**
      * @brief Set list of addons.
      * @param addons List of addons.
      */
     void setAddons(const QStringList &addons);
+
+    /** @brief Set list of Visual Studio configurations to be checked
+     *  @param vsConfigs List of configurations
+     */
+    void setVSConfigurations(const QStringList &vsConfigs);
 
     /**
      * @brief Set tags.
@@ -279,6 +346,12 @@ public:
     void setTags(const QStringList &tags) {
         mTags = tags;
     }
+
+    /** Set tags for a warning */
+    void setWarningTags(std::size_t hash, QString tags);
+
+    /** Get tags for a warning */
+    QString getWarningTags(std::size_t hash) const;
 
     /**
      * @brief Write project file (to disk).
@@ -295,52 +368,15 @@ public:
     }
 
     /** Do not only check how interface is used. Also check that interface is safe. */
-    class SafeChecks {
+    class SafeChecks : public Settings::SafeChecks {
     public:
-        SafeChecks() : classes(false), externalFunctions(false), internalFunctions(false), externalVariables(false) {}
-
-        void clear() {
-            classes = externalFunctions = internalFunctions = externalVariables = false;
-        }
+        SafeChecks() : Settings::SafeChecks() {}
 
         void loadFromXml(QXmlStreamReader &xmlReader);
         void saveToXml(QXmlStreamWriter &xmlWriter) const;
-
-        /**
-         * Public interface of classes
-         * - public function parameters can have any value
-         * - public functions can be called in any order
-         * - public variables can have any value
-         */
-        bool classes;
-
-        /**
-         * External functions
-         * - external functions can be called in any order
-         * - function parameters can have any values
-         */
-        bool externalFunctions;
-
-        /**
-         * Experimental: assume that internal functions can be used in any way
-         * This is only available in the GUI.
-         */
-        bool internalFunctions;
-
-        /**
-         * Global variables that can be modified outside the TU.
-         * - Such variable can have "any" value
-         */
-        bool externalVariables;
     };
 
-    /** Safe checks */
-    SafeChecks getSafeChecks() const {
-        return mSafeChecks;
-    }
-    void setSafeChecks(SafeChecks safeChecks) {
-        mSafeChecks = safeChecks;
-    }
+    SafeChecks safeChecks;
 
     /** Check unknown function return values */
     QStringList getCheckUnknownFunctionReturn() const {
@@ -350,6 +386,11 @@ public:
         mCheckUnknownFunctionReturn = s;
     }
 
+    /** Use Clang parser */
+    bool clangParser;
+
+    /** Bug hunting */
+    bool bugHunting;
 protected:
 
     /**
@@ -395,6 +436,24 @@ protected:
     void readExcludes(QXmlStreamReader &reader);
 
     /**
+     * @brief Read function contracts.
+     * @param reader XML stream reader.
+     */
+    void readFunctionContracts(QXmlStreamReader &reader);
+
+    /**
+     * @brief Read variable constraints.
+     * @param reader XML stream reader.
+     */
+    void readVariableContracts(QXmlStreamReader &reader);
+
+    /**
+     * @brief Read lists of Visual Studio configurations
+     * @param reader XML stream reader.
+     */
+    void readVsConfigurations(QXmlStreamReader &reader);
+
+    /**
      * @brief Read platform text.
      * @param reader XML stream reader.
      */
@@ -405,6 +464,12 @@ protected:
      * @param reader XML stream reader.
      */
     void readSuppressions(QXmlStreamReader &reader);
+
+    /**
+     * @brief Read tag warnings, what warnings are tagged with a specific tag
+     * @param reader XML stream reader.
+     */
+    void readTagWarnings(QXmlStreamReader &reader, const QString &tag);
 
     /**
       * @brief Read string list
@@ -458,6 +523,9 @@ private:
      */
     bool mAnalyzeAllVsConfigs;
 
+    /** Check only a selected VS configuration */
+    QStringList mVsConfigurations;
+
     /** Check code in headers */
     bool mCheckHeaders;
 
@@ -494,6 +562,10 @@ private:
      */
     QStringList mLibraries;
 
+    std::map<std::string, std::string> mFunctionContracts;
+
+    std::map<QString, Settings::VariableContracts> mVariableContracts;
+
     /**
      * @brief Platform
      */
@@ -516,17 +588,24 @@ private:
     bool mClangTidy;
 
     /**
-     * @brief Warning tags
+     * @brief Tags
      */
     QStringList mTags;
+
+    /**
+     * @brief Warning tags
+     */
+    std::map<std::size_t, QString> mWarningTags;
 
     /** Max CTU depth */
     int mMaxCtuDepth;
 
-    SafeChecks mSafeChecks;
+    /** Max template instantiation recursion */
+    int mMaxTemplateRecursion;
 
     QStringList mCheckUnknownFunctionReturn;
 
+    static ProjectFile *mActiveProject;
 };
 /// @}
 #endif  // PROJECT_FILE_H

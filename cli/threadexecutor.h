@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,8 +19,8 @@
 #ifndef THREADEXECUTOR_H
 #define THREADEXECUTOR_H
 
+#include "config.h"
 #include "errorlogger.h"
-#include "importproject.h"
 
 #include <cstddef>
 #include <list>
@@ -32,6 +32,8 @@
 #elif defined(_WIN32)
 #define THREADING_MODEL_WIN
 #include <windows.h>
+
+#include "importproject.h"
 #endif
 
 class Settings;
@@ -52,8 +54,9 @@ public:
     unsigned int check();
 
     void reportOut(const std::string &outmsg) OVERRIDE;
-    void reportErr(const ErrorLogger::ErrorMessage &msg) OVERRIDE;
-    void reportInfo(const ErrorLogger::ErrorMessage &msg) OVERRIDE;
+    void reportErr(const ErrorMessage &msg) OVERRIDE;
+    void reportInfo(const ErrorMessage &msg) OVERRIDE;
+    void bughuntingReport(const std::string &str) OVERRIDE;
 
     /**
      * @brief Add content to a file, to be used in unit testing.
@@ -75,7 +78,7 @@ private:
     /** @brief Key is file name, and value is the content of the file */
     std::map<std::string, std::string> mFileContents;
 private:
-    enum PipeSignal {REPORT_OUT='1',REPORT_ERROR='2', REPORT_INFO='3', CHILD_END='4'};
+    enum PipeSignal {REPORT_OUT='1',REPORT_ERROR='2', REPORT_INFO='3', REPORT_VERIFICATION='4', CHILD_END='5'};
 
     /**
      * Read from the pipe, parse and handle what ever is in there.
@@ -98,6 +101,12 @@ private:
      * @return true - if new process can be started
      */
     bool checkLoadAverage(size_t nchildren);
+
+    /**
+     * @brief Reports internal errors related to child processes
+     * @param msg The error message
+     */
+    void reportInternalChildErr(const std::string &childname, const std::string &msg);
 
 public:
     /**
@@ -126,7 +135,7 @@ private:
 
     CRITICAL_SECTION mReportSync;
 
-    void report(const ErrorLogger::ErrorMessage &msg, MessageType msgType);
+    void report(const ErrorMessage &msg, MessageType msgType);
 
     static unsigned __stdcall threadProc(void*);
 

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,6 @@
 #include <vector>
 
 class Settings;
-class Token;
 
 namespace simplecpp {
     class TokenList;
@@ -99,7 +98,7 @@ public:
      */
     bool createTokens(std::istream &code, const std::string& file0 = emptyString);
 
-    void createTokens(const simplecpp::TokenList *tokenList);
+    void createTokens(simplecpp::TokenList&& tokenList);
 
     /** Deallocate list */
     void deallocateTokens();
@@ -186,6 +185,10 @@ public:
      */
     void simplifyStdType();
 
+    void clangSetOrigFiles();
+
+    bool isKeyword(const std::string &str) const;
+
 private:
 
     /** Disable copy constructor, no implementation */
@@ -193,6 +196,8 @@ private:
 
     /** Disable assignment operator, no implementation */
     TokenList &operator=(const TokenList &);
+
+    void determineCppC();
 
     /** Token list */
     TokensFrontBack mTokensFrontBack;
@@ -206,8 +211,11 @@ private:
     /** settings */
     const Settings* mSettings;
 
+    std::set<std::string> mKeywords;
+
     /** File is known to be C/C++ code */
-    bool mIsC, mIsCpp;
+    bool mIsC;
+    bool mIsCpp;
 };
 
 /// @}

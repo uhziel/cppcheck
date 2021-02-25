@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,13 +25,12 @@
 #include "astutils.h"
 #include "checkmemoryleak.h"  // <- CheckMemoryLeak::memoryLeak
 #include "checknullpointer.h" // <- CheckNullPointer::isPointerDeRef
-#include "errorlogger.h"
 #include "mathlib.h"
 #include "settings.h"
+#include "errortypes.h"
 #include "symboldatabase.h"
 #include "token.h"
 #include "tokenize.h"
-#include "valueflow.h"
 
 #include <cstddef>
 #include <iostream>
@@ -105,7 +104,7 @@ void VarInfo::print()
         default:
             status = "?";
             break;
-        };
+        }
 
         std::cout << "status=" << status << " "
                   << "alloctype='" << it->second.type << "' "
@@ -175,6 +174,9 @@ void CheckLeakAutoVar::doubleFreeError(const Token *tok, const Token *prevFreeTo
 
 void CheckLeakAutoVar::check()
 {
+    if (mSettings->clang)
+        return;
+
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
 
     // Local variables that are known to be non-zero.
@@ -461,23 +463,21 @@ void CheckLeakAutoVar::checkScope(const Token * const startToken,
                 VarInfo varInfo1(*varInfo);  // VarInfo for if code
                 VarInfo varInfo2(*varInfo);  // VarInfo for else code
 
+                // Skip expressions before commas
+                const Token * astOperand2AfterCommas = tok->next()->astOperand2();
+                while (Token::simpleMatch(astOperand2AfterCommas, ","))
+                    astOperand2AfterCommas = astOperand2AfterCommas->astOperand2();
+
                 // Recursively scan variable comparisons in condition
-                std::stack<const Token *> tokens;
-                tokens.push(tok->next()->astOperand2());
-                while (!tokens.empty()) {
-                    const Token *tok3 = tokens.top();
-                    tokens.pop();
+                visitAstNodes(astOperand2AfterCommas, [&](const Token *tok3) {
                     if (!tok3)
-                        continue;
+                        return ChildrenToVisit::none;
                     if (tok3->str() == "&&" || tok3->str() == "||") {
                         // FIXME: handle && ! || better
-                        tokens.push(tok3->astOperand1());
-                        tokens.push(tok3->astOperand2());
-                        continue;
+                        return ChildrenToVisit::op1_and_op2;
                     }
                     if (tok3->str() == "(" && Token::Match(tok3->astOperand1(), "UNLIKELY|LIKELY")) {
-                        tokens.push(tok3->astOperand2());
-                        continue;
+                        return ChildrenToVisit::op2;
                     } else if (tok3->str() == "(" && Token::Match(tok3->previous(), "%name%")) {
                         const std::vector<const Token *> params = getArguments(tok3->previous());
                         for (const Token *par : params) {
@@ -494,7 +494,7 @@ void CheckLeakAutoVar::checkScope(const Token * const startToken,
                                 varInfo2.erase(vartok->varId());
                             }
                         }
-                        continue;
+                        return ChildrenToVisit::none;
                     }
 
                     const Token *vartok = nullptr;
@@ -510,8 +510,11 @@ void CheckLeakAutoVar::checkScope(const Token * const startToken,
                         varInfo2.erase(vartok->varId());
                     } else if (astIsVariableComparison(tok3, "==", "-1", &vartok)) {
                         varInfo1.erase(vartok->varId());
+                    } else if (astIsVariableComparison(tok3, "!=", "-1", &vartok)) {
+                        varInfo2.erase(vartok->varId());
                     }
-                }
+                    return ChildrenToVisit::none;
+                });
 
                 checkScope(closingParenthesis->next(), &varInfo1, notzero, recursiveCount);
                 closingParenthesis = closingParenthesis->linkAt(1);
@@ -743,8 +746,31 @@ const Token * CheckLeakAutoVar::checkTokenInsideExpression(const Token * const t
                 deallocUseError(tok, tok->str());
             } else if (Token::simpleMatch(tok->tokAt(-2), "= &")) {
                 varInfo->erase(tok->varId());
-            } else if (Token::Match(tok->previous(), "= %var% [;,)]")) {
-                varInfo->erase(tok->varId());
+            } else {
+                // check if tok is assigned into another variable
+                const Token *rhs = tok;
+                while (rhs->astParent()) {
+                    if (rhs->astParent()->str() == "=")
+                        break;
+                    rhs = rhs->astParent();
+                }
+                if (rhs->varId() == tok->varId()) {
+                    // simple assignment
+                    varInfo->erase(tok->varId());
+                } else if (rhs->str() == "(" && mSettings->library.returnValue(rhs->astOperand1()) != emptyString) {
+                    // #9298, assignment through return value of a function
+                    const std::string &returnValue = mSettings->library.returnValue(rhs->astOperand1());
+                    if (returnValue.compare(0, 3, "arg") == 0) {
+                        int argn;
+                        const Token *func = getTokenArgumentFunction(tok, argn);
+                        if (func) {
+                            const std::string arg = "arg" + std::to_string(argn + 1);
+                            if (returnValue == arg) {
+                                varInfo->erase(tok->varId());
+                            }
+                        }
+                    }
+                }
             }
         } else if (Token::Match(tok->previous(), "& %name% = %var% ;")) {
             varInfo->referenced.insert(tok->tokAt(2)->varId());
@@ -759,6 +785,10 @@ const Token * CheckLeakAutoVar::checkTokenInsideExpression(const Token * const t
         if (alloc.type == 0)
             alloc.status = VarInfo::NOALLOC;
         functionCall(tok, openingPar, varInfo, alloc, nullptr);
+        const std::string &returnValue = mSettings->library.returnValue(tok);
+        if (returnValue.compare(0, 3, "arg") == 0)
+            // the function returns one of its argument, we need to process a potential assignment
+            return openingPar;
         return openingPar->link();
     }
 
@@ -827,7 +857,8 @@ void CheckLeakAutoVar::functionCall(const Token *tokName, const Token *tokOpenin
     }
 
     int argNr = 1;
-    for (const Token *arg = tokFirstArg; arg; arg = arg->nextArgument()) {
+    for (const Token *funcArg = tokFirstArg; funcArg; funcArg = funcArg->nextArgument()) {
+        const Token* arg = funcArg;
         if (mTokenizer->isCPP() && arg->str() == "new") {
             arg = arg->next();
             if (Token::simpleMatch(arg, "( std :: nothrow )"))

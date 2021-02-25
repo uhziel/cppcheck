@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,8 +22,8 @@
 //---------------------------------------------------------------------------
 
 #include "config.h"
-#include "errorlogger.h"
 #include "mathlib.h"
+#include "errortypes.h"
 #include "standards.h"
 
 #include <cstddef>
@@ -78,6 +78,7 @@ public:
         int bufferSizeArg1;
         int bufferSizeArg2;
         int reallocArg;
+        bool initData;
     };
 
     /** get allocation info for function */
@@ -142,6 +143,8 @@ public:
         mNoReturn[funcname] = noreturn;
     }
 
+    static bool isCompliantValidationExpression(const char* p);
+
     /** is allocation type memory? */
     static bool ismemory(const int id) {
         return ((id > 0) && ((id & 1) == 0));
@@ -177,7 +180,8 @@ public:
 	bool isNotLibraryFunction2(const Token *ftok) const;
     bool matchArguments(const Token *ftok, const std::string &functionName) const;
 
-    bool isUseRetVal(const Token* ftok) const;
+    enum class UseRetValType { NONE, DEFAULT, ERROR_CODE };
+    UseRetValType getUseRetValType(const Token* ftok) const;
 
     const std::string& returnValue(const Token *ftok) const;
     const std::string& returnValueType(const Token *ftok) const;
@@ -199,7 +203,9 @@ public:
             stdStringLike(false),
             stdAssociativeLike(false),
             opLessAllowed(true),
-            hasInitializerListConstructor(false) {
+            hasInitializerListConstructor(false),
+            unstableErase(false),
+            unstableInsert(false) {
         }
 
         enum class Action {
@@ -223,6 +229,8 @@ public:
         bool stdAssociativeLike;
         bool opLessAllowed;
         bool hasInitializerListConstructor;
+        bool unstableErase;
+        bool unstableInsert;
 
         Action getAction(const std::string& function) const {
             const std::map<std::string, Function>::const_iterator i = functions.find(function);
@@ -295,21 +303,21 @@ public:
         Direction direction;
     };
 
-
     struct Function {
         std::map<int, ArgumentChecks> argumentChecks; // argument nr => argument data
         bool use;
         bool leakignore;
         bool isconst;
         bool ispure;
-        bool useretval;
+        UseRetValType useretval;
         bool ignore;  // ignore functions/macros from a library (gtk, qt etc)
         bool formatstr;
         bool formatstr_scan;
         bool formatstr_secure;
-        Function() : use(false), leakignore(false), isconst(false), ispure(false), useretval(false), ignore(false), formatstr(false), formatstr_scan(false), formatstr_secure(false) {}
+        Function() : use(false), leakignore(false), isconst(false), ispure(false), useretval(UseRetValType::NONE), ignore(false), formatstr(false), formatstr_scan(false), formatstr_secure(false) {}
     };
 
+    const Function *getFunction(const Token *ftok) const;
     std::map<std::string, Function> functions;
     bool isUse(const std::string& functionName) const;
     bool isLeakIgnore(const std::string& functionName) const;
@@ -322,7 +330,7 @@ public:
     }
 
     bool isnullargbad(const Token *ftok, int argnr) const;
-    bool isuninitargbad(const Token *ftok, int argnr, int indirect = 0) const;
+    bool isuninitargbad(const Token *ftok, int argnr, int indirect = 0, bool *hasIndirect=nullptr) const;
 
     bool isargformatstr(const Token *ftok, int argnr) const {
         const ArgumentChecks *arg = getarg(ftok, argnr);
@@ -341,6 +349,16 @@ public:
         const ArgumentChecks *arg = getarg(ftok, argnr);
         return arg ? arg->valid : emptyString;
     }
+
+    struct InvalidArgValue {
+        enum Type {le, lt, eq, ge, gt, range} type;
+        std::string op1;
+        std::string op2;
+        bool isInt() const {
+            return MathLib::isInt(op1);
+        }
+    };
+    static std::vector<InvalidArgValue> getInvalidArgValues(const std::string &validExpr);
 
     const ArgumentChecks::IteratorInfo *getArgIteratorInfo(const Token *ftok, int argnr) const {
         const ArgumentChecks *arg = getarg(ftok, argnr);
@@ -404,7 +422,6 @@ public:
         return -1;
     }
 
-    std::set<std::string> returnuninitdata;
     std::vector<std::string> defines; // to provide some library defines
 
     std::set<std::string> smartPointers;

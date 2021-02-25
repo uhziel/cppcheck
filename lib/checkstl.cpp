@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,8 +18,10 @@
 
 #include "checkstl.h"
 
+#include "check.h"
 #include "checknullpointer.h"
-#include "errorlogger.h"
+#include "library.h"
+#include "mathlib.h"
 #include "settings.h"
 #include "standards.h"
 #include "symboldatabase.h"
@@ -27,8 +29,11 @@
 #include "utils.h"
 #include "astutils.h"
 #include "pathanalysis.h"
+#include "valueflow.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <list>
 #include <map>
 #include <set>
@@ -45,12 +50,19 @@ static const struct CWE CWE398(398U);   // Indicator of Poor Code Quality
 static const struct CWE CWE597(597U);   // Use of Wrong Operator in String Comparison
 static const struct CWE CWE628(628U);   // Function Call with Incorrectly Specified Arguments
 static const struct CWE CWE664(664U);   // Improper Control of a Resource Through its Lifetime
+static const struct CWE CWE667(667U);   // Improper Locking
 static const struct CWE CWE704(704U);   // Incorrect Type Conversion or Cast
 static const struct CWE CWE762(762U);   // Mismatched Memory Management Routines
 static const struct CWE CWE786(786U);   // Access of Memory Location Before Start of Buffer
 static const struct CWE CWE788(788U);   // Access of Memory Location After End of Buffer
 static const struct CWE CWE825(825U);   // Expired Pointer Dereference
+static const struct CWE CWE833(833U);   // Deadlock
 static const struct CWE CWE834(834U);   // Excessive Iteration
+
+static bool isElementAccessYield(const Library::Container::Yield& yield)
+{
+    return yield == Library::Container::Yield::ITEM || yield == Library::Container::Yield::AT_INDEX;
+}
 
 void CheckStl::outOfBounds()
 {
@@ -69,9 +81,28 @@ void CheckStl::outOfBounds()
                     continue;
                 if (!value.errorSeverity() && !mSettings->isEnabled(Settings::WARNING))
                     continue;
-                if (value.intvalue == 0 && Token::Match(parent, ". %name% (") && container->getYield(parent->strAt(1)) == Library::Container::Yield::ITEM) {
-                    outOfBoundsError(parent->tokAt(2), tok->expressionString(), &value, parent->strAt(1), nullptr);
-                    continue;
+                if (Token::Match(parent, ". %name% (") && isElementAccessYield(container->getYield(parent->strAt(1)))) {
+                    if (value.intvalue == 0) {
+                        outOfBoundsError(parent->tokAt(2), tok->expressionString(), &value, parent->strAt(1), nullptr);
+                        continue;
+                    }
+                    const Token* indexTok = parent->tokAt(2)->astOperand2();
+                    if (!indexTok)
+                        continue;
+                    const ValueFlow::Value* indexValue = indexTok->getMaxValue(false);
+                    if (indexValue && indexValue->intvalue >= value.intvalue) {
+                        outOfBoundsError(
+                            parent, tok->expressionString(), &value, indexTok->expressionString(), indexValue);
+                        continue;
+                    }
+                    if (mSettings->isEnabled(Settings::WARNING)) {
+                        indexValue = indexTok->getMaxValue(true);
+                        if (indexValue && indexValue->intvalue >= value.intvalue) {
+                            outOfBoundsError(
+                                parent, tok->expressionString(), &value, indexTok->expressionString(), indexValue);
+                            continue;
+                        }
+                    }
                 }
                 if (Token::Match(tok, "%name% . %name% (") && container->getYield(tok->strAt(2)) == Library::Container::Yield::START_ITERATOR) {
                     const Token *fparent = tok->tokAt(3)->astParent();
@@ -113,6 +144,15 @@ void CheckStl::outOfBounds()
     }
 }
 
+static std::string indexValueString(const ValueFlow::Value& indexValue)
+{
+    if (indexValue.isIteratorStartValue())
+        return "at position " + MathLib::toString(indexValue.intvalue) + " from the beginning";
+    if (indexValue.isIteratorEndValue())
+        return "at position " + MathLib::toString(-indexValue.intvalue) + " from the end";
+    return MathLib::toString(indexValue.intvalue);
+}
+
 void CheckStl::outOfBoundsError(const Token *tok, const std::string &containerName, const ValueFlow::Value *containerSize, const std::string &index, const ValueFlow::Value *indexValue)
 {
     // Do not warn if both the container size and index value are possible
@@ -135,9 +175,9 @@ void CheckStl::outOfBoundsError(const Token *tok, const std::string &containerNa
         if (containerSize->condition)
             errmsg = ValueFlow::eitherTheConditionIsRedundant(containerSize->condition) + " or $symbol size can be " + MathLib::toString(containerSize->intvalue) + ". Expression '" + expression + "' cause access out of bounds.";
         else if (indexValue->condition)
-            errmsg = ValueFlow::eitherTheConditionIsRedundant(indexValue->condition) + " or '" + index + "' can have the value " + MathLib::toString(indexValue->intvalue) + ". Expression '" + expression + "' cause access out of bounds.";
+            errmsg = ValueFlow::eitherTheConditionIsRedundant(indexValue->condition) + " or '" + index + "' can have the value " + indexValueString(*indexValue) + ". Expression '" + expression + "' cause access out of bounds.";
         else
-            errmsg = "Out of bounds access in '" + expression + "', if '$symbol' size is " + MathLib::toString(containerSize->intvalue) + " and '" + index + "' is " + MathLib::toString(indexValue->intvalue);
+            errmsg = "Out of bounds access in '" + expression + "', if '$symbol' size is " + MathLib::toString(containerSize->intvalue) + " and '" + index + "' is " + indexValueString(*indexValue);
     } else {
         // should not happen
         return;
@@ -274,23 +314,6 @@ void CheckStl::iteratorsError(const Token* tok, const Token* containerTok, const
                 "Same iterator is used with containers '" + containerName + "' that are defined in different scopes.", CWE664, false);
 }
 
-void CheckStl::iteratorsCmpError(const Token* cmpOperatorTok, const Token* containerTok1, const Token* containerTok2, const std::string& containerName1, const std::string& containerName2)
-{
-    std::list<const Token*> callstack = { cmpOperatorTok, containerTok1, containerTok2 };
-    reportError(callstack, Severity::error, "iteratorsCmp1",
-                "$symbol:" + containerName1 + "\n"
-                "$symbol:" + containerName2 + "\n"
-                "Comparison of iterators from containers '" + containerName1 + "' and '" + containerName2 + "'.", CWE664, false);
-}
-
-void CheckStl::iteratorsCmpError(const Token* cmpOperatorTok, const Token* containerTok1, const Token* containerTok2, const std::string& containerName)
-{
-    std::list<const Token*> callstack = { cmpOperatorTok, containerTok1, containerTok2 };
-    reportError(callstack, Severity::error, "iteratorsCmp2",
-                "$symbol:" + containerName + "\n"
-                "Comparison of iterators from containers '" + containerName + "' that are defined in different scopes.", CWE664, false);
-}
-
 // Error message used when dereferencing an iterator that has been erased..
 void CheckStl::dereferenceErasedError(const Token *erased, const Token* deref, const std::string &itername, bool inconclusive)
 {
@@ -359,24 +382,6 @@ enum OperandPosition {
     Right
 };
 
-static const Token* findIteratorContainer(const Token* start, const Token* end, nonneg int id)
-{
-    const Token* containerToken = nullptr;
-    for (const Token* tok = start; tok != end; tok = tok->next()) {
-        if (Token::Match(tok, "%varid% = %name% . %name% (", id)) {
-            // Iterator is assigned to value
-            if (tok->tokAt(5)->valueType() && tok->tokAt(5)->valueType()->type == ValueType::Type::ITERATOR) {
-                containerToken = tok->tokAt(2);
-            }
-        } else if (Token::Match(tok, "%varid% = %name% (", id)) {
-            // Prevent FP: iterator is assigned to something
-            // TODO: Fix it in future
-            containerToken = nullptr;
-        }
-    }
-    return containerToken;
-}
-
 static bool isVector(const Token* tok)
 {
     if (!tok)
@@ -400,8 +405,6 @@ void CheckStl::iterators()
         if (iteratorId != 0)
             iteratorScopeBeginInfo[iteratorId] = var->nameToken();
     }
-    // Storage to save found comparison problems to avoid duplicate error messages
-    std::set<const Token*> foundOperatorErrors;
 
     for (const Variable* var : symbolDatabase->variableList()) {
         bool inconclusiveType=false;
@@ -439,16 +442,8 @@ void CheckStl::iterators()
                 invalidationScope = nullptr;
             }
 
-            // Is comparison expression?
-            // Check whether iterator compared against different container or iterator of different container?
-            if (tok2->isComparisonOp() && tok2->astOperand1() && tok2->astOperand2() &&
-                (foundOperatorErrors.find(tok2) == foundOperatorErrors.end()) &&
-                compareIteratorAgainstDifferentContainer(tok2, containerToken, iteratorId, iteratorScopeBeginInfo)) {
-                foundOperatorErrors.insert(tok2);
-            }
-
             // Is the iterator used in a insert/erase operation?
-            else if (Token::Match(tok2, "%name% . insert|erase ( *| %varid% )|,", iteratorId) && !isVector(tok2)) {
+            if (Token::Match(tok2, "%name% . insert|erase ( *| %varid% )|,", iteratorId) && !isVector(tok2)) {
                 const Token* itTok = tok2->tokAt(4);
                 if (itTok->str() == "*") {
                     if (tok2->strAt(2) == "insert")
@@ -579,65 +574,29 @@ void CheckStl::iterators()
     }
 }
 
-bool CheckStl::compareIteratorAgainstDifferentContainer(const Token* operatorTok, const Token* containerTok, const nonneg int iteratorId, const std::map<int, const Token*>& iteratorScopeBeginInfo)
+void CheckStl::mismatchingContainerIteratorError(const Token* tok, const Token* iterTok)
 {
-    if (!containerTok)
-        return false;
-
-    const Token *otherOperand = nullptr;
-    OperandPosition operandPosition;
-    if (operatorTok->astOperand1()->varId() == iteratorId) {
-        otherOperand = operatorTok->astOperand2();
-        operandPosition = OperandPosition::Right;
-    } else if (operatorTok->astOperand2()->varId() == iteratorId) {
-        otherOperand = operatorTok->astOperand1();
-        operandPosition = OperandPosition::Left;
-    }
-
-    if (!otherOperand)
-        return false;
-
-    const Token * const otherExprPart = otherOperand->tokAt(-3);
-    if (Token::Match(otherExprPart, "%name% . end|rend|cend|crend ( )") && otherExprPart->varId() != containerTok->varId()) {
-        const std::string& firstContainerName = getContainerName(containerTok);
-        const std::string& secondContainerName = getContainerName(otherExprPart);
-        if (firstContainerName != secondContainerName) {
-            if (operandPosition == OperandPosition::Right)
-                iteratorsError(operatorTok, containerTok, firstContainerName, secondContainerName);
-            else
-                iteratorsError(operatorTok, containerTok, secondContainerName, firstContainerName);
-        } else {
-            iteratorsError(operatorTok, containerTok, firstContainerName);
-        }
-        return true;
-    } else {
-        const int otherId = otherOperand->varId();
-        auto it = iteratorScopeBeginInfo.find(otherId);
-        if (it != iteratorScopeBeginInfo.end()) {
-            const Token* otherContainerToken = findIteratorContainer(it->second, operatorTok->astOperand1(), otherId);
-            if (otherContainerToken && otherContainerToken->varId() != containerTok->varId()) {
-                const std::string& firstContainerName = getContainerName(containerTok);
-                const std::string& secondContainerName = getContainerName(otherContainerToken);
-                if (firstContainerName != secondContainerName) {
-                    if (operandPosition == OperandPosition::Right)
-                        iteratorsCmpError(operatorTok, containerTok, otherContainerToken, firstContainerName, secondContainerName);
-                    else
-                        iteratorsCmpError(operatorTok, containerTok, otherContainerToken, secondContainerName, firstContainerName);
-                } else {
-                    iteratorsCmpError(operatorTok, containerTok, otherContainerToken, firstContainerName);
-                }
-                return true;
-            }
-        }
-    }
-
-    return false;
+    const std::string container(tok ? tok->expressionString() : std::string("v1"));
+    const std::string iter(iterTok ? iterTok->expressionString() : std::string("it"));
+    reportError(tok,
+                Severity::error,
+                "mismatchingContainerIterator",
+                "Iterator '" + iter + "' from different container '" + container + "' are used together.",
+                CWE664,
+                false);
 }
 
 // Error message for bad iterator usage..
-void CheckStl::mismatchingContainersError(const Token *tok)
+void CheckStl::mismatchingContainersError(const Token* tok1, const Token* tok2)
 {
-    reportError(tok, Severity::error, "mismatchingContainers", "Iterators of different containers are used together.", CWE664, false);
+    const std::string expr1(tok1 ? tok1->expressionString() : std::string("v1"));
+    const std::string expr2(tok2 ? tok2->expressionString() : std::string("v2"));
+    reportError(tok1,
+                Severity::error,
+                "mismatchingContainers",
+                "Iterators of different containers '" + expr1 + "' and '" + expr2 + "' are used together.",
+                CWE664,
+                false);
 }
 
 void CheckStl::mismatchingContainerExpressionError(const Token *tok1, const Token *tok2)
@@ -679,18 +638,6 @@ static const std::string pattern1x1_1 = "%name% . " + iteratorBeginFuncPattern +
 static const std::string pattern1x1_2 = "%name% . " + iteratorEndFuncPattern + " ( ) ,|)";
 static const std::string pattern2 = pattern1x1_1 + pattern1x1_2;
 
-static const Variable *getContainer(const Token *argtok)
-{
-    while (argtok && argtok->astOperand1())
-        argtok = argtok->astOperand1();
-    if (!Token::Match(argtok, "%var% . begin|end|rbegin|rend ( )")) // TODO: use Library yield
-        return nullptr;
-    const Variable *var = argtok->variable();
-    if (var && Token::simpleMatch(var->typeStartToken(), "std ::"))
-        return var;
-    return nullptr;
-}
-
 static const Token * getIteratorExpression(const Token * tok)
 {
     if (!tok)
@@ -715,6 +662,47 @@ static const Token * getIteratorExpression(const Token * tok)
     return nullptr;
 }
 
+bool CheckStl::checkIteratorPair(const Token* tok1, const Token* tok2)
+{
+    if (!tok1)
+        return false;
+    if (!tok2)
+        return false;
+    ValueFlow::Value val1 = getLifetimeObjValue(tok1);
+    ValueFlow::Value val2 = getLifetimeObjValue(tok2);
+    if (val1.tokvalue && val2.tokvalue && val1.lifetimeKind == val2.lifetimeKind) {
+        if (val1.lifetimeKind == ValueFlow::Value::LifetimeKind::Lambda)
+            return false;
+        if (tok1->astParent() == tok2->astParent() && Token::Match(tok1->astParent(), "%comp%|-")) {
+            if (val1.lifetimeKind == ValueFlow::Value::LifetimeKind::Address)
+                return false;
+            if (val1.lifetimeKind == ValueFlow::Value::LifetimeKind::Object &&
+                (!astIsContainer(val1.tokvalue) || !astIsContainer(val2.tokvalue)))
+                return false;
+        }
+        if (isSameExpression(true, false, val1.tokvalue, val2.tokvalue, mSettings->library, false, false))
+            return false;
+        if (val1.tokvalue->expressionString() == val2.tokvalue->expressionString())
+            iteratorsError(tok1, val1.tokvalue, val1.tokvalue->expressionString());
+        else
+            mismatchingContainersError(val1.tokvalue, val2.tokvalue);
+        return true;
+    }
+
+    const Token* iter1 = getIteratorExpression(tok1);
+    const Token* iter2 = getIteratorExpression(tok2);
+    if (iter1 && iter2 && !isSameExpression(true, false, iter1, iter2, mSettings->library, false, false)) {
+        mismatchingContainerExpressionError(iter1, iter2);
+        return true;
+    }
+    return false;
+}
+
+struct ArgIteratorInfo {
+    const Token* tok;
+    const Library::ArgumentChecks::IteratorInfo* info;
+};
+
 void CheckStl::mismatchingContainers()
 {
     // Check if different containers are used in various calls of standard functions
@@ -722,88 +710,136 @@ void CheckStl::mismatchingContainers()
     for (const Scope * scope : symbolDatabase->functionScopes) {
         for (const Token* tok = scope->bodyStart->next(); tok != scope->bodyEnd; tok = tok->next()) {
             if (Token::Match(tok, "%comp%|-")) {
-                const Token * iter1 = getIteratorExpression(tok->astOperand1());
-                const Token * iter2 = getIteratorExpression(tok->astOperand2());
-                if (iter1 && iter2 && !isSameExpression(true, false, iter1, iter2, mSettings->library, false, false)) {
-                    mismatchingContainerExpressionError(iter1, iter2);
+                if (checkIteratorPair(tok->astOperand1(), tok->astOperand2()))
                     continue;
-                }
             }
             if (!Token::Match(tok, "%name% ( !!)"))
                 continue;
             const Token * const ftok = tok;
-            const Token * firstArg = nullptr;
 
             const std::vector<const Token *> args = getArguments(ftok);
             if (args.size() < 2)
                 continue;
 
-            std::map<const Variable *, int> containerNr;
+            // Group args together by container
+            std::map<int, std::vector<ArgIteratorInfo>> containers;
             for (int argnr = 1; argnr <= args.size(); ++argnr) {
                 const Library::ArgumentChecks::IteratorInfo *i = mSettings->library.getArgIteratorInfo(ftok, argnr);
                 if (!i)
                     continue;
                 const Token * const argTok = args[argnr - 1];
-                if (i->first) {
-                    firstArg = argTok;
-                }
-                if (i->last && firstArg && argTok && isSameExpression(true, false, firstArg, argTok, mSettings->library, false, false)) {
-                    sameIteratorExpressionError(firstArg);
-                }
-                const Variable *c = getContainer(argTok);
-                if (c) {
-                    std::map<const Variable *, int>::const_iterator it = containerNr.find(c);
-                    if (it == containerNr.end()) {
-                        for (it = containerNr.begin(); it != containerNr.end(); ++it) {
-                            if (it->second == i->container) {
-                                mismatchingContainersError(argTok);
-                                break;
-                            }
-                        }
-                        containerNr[c] = i->container;
-                    } else if (it->second != i->container) {
-                        mismatchingContainersError(argTok);
-                    }
-                } else {
-                    if (i->last && firstArg && argTok) {
-                        const Token * iter1 = getIteratorExpression(firstArg);
-                        const Token * iter2 = getIteratorExpression(argTok);
-                        if (iter1 && iter2 && !isSameExpression(true, false, iter1, iter2, mSettings->library, false, false)) {
-                            mismatchingContainerExpressionError(iter1, iter2);
+                containers[i->container].push_back({argTok, i});
+            }
+
+            // Lambda is used to escape the nested loops
+            [&] {
+                for (const auto& p : containers)
+                {
+                    const std::vector<ArgIteratorInfo>& cargs = p.second;
+                    for (ArgIteratorInfo iter1 : cargs) {
+                        for (ArgIteratorInfo iter2 : cargs) {
+                            if (iter1.tok == iter2.tok)
+                                continue;
+                            if (iter1.info->first && iter2.info->last &&
+                                isSameExpression(true, false, iter1.tok, iter2.tok, mSettings->library, false, false))
+                                sameIteratorExpressionError(iter1.tok);
+                            if (checkIteratorPair(iter1.tok, iter2.tok))
+                                return;
                         }
                     }
                 }
-            }
-            const int ret = mSettings->library.returnValueContainer(ftok);
-            if (ret != -1 && Token::Match(ftok->next()->astParent(), "==|!=")) {
-                const Token *parent = ftok->next()->astParent();
-                const Token *other = (parent->astOperand1() == ftok->next()) ? parent->astOperand2() : parent->astOperand1();
-                const Variable *c = getContainer(other);
-                if (c) {
-                    const std::map<const Variable *, int>::const_iterator it = containerNr.find(c);
-                    if (it == containerNr.end() || it->second != ret)
-                        mismatchingContainersError(other);
-                }
-            }
+            }();
         }
     }
     for (const Variable *var : symbolDatabase->variableList()) {
         if (var && var->isStlStringType() && Token::Match(var->nameToken(), "%var% (") && Token::Match(var->nameToken()->tokAt(2), pattern2.c_str())) {
             if (var->nameToken()->strAt(2) != var->nameToken()->strAt(8)) {
-                mismatchingContainersError(var->nameToken());
+                mismatchingContainersError(var->nameToken(), var->nameToken()->tokAt(2));
             }
+        }
+    }
+}
+
+void CheckStl::mismatchingContainerIterator()
+{
+    // Check if different containers are used in various calls of standard functions
+    const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
+    for (const Scope * scope : symbolDatabase->functionScopes) {
+        for (const Token* tok = scope->bodyStart->next(); tok != scope->bodyEnd; tok = tok->next()) {
+            if (!astIsContainer(tok))
+                continue;
+            if (!Token::Match(tok, "%var% . %name% ( !!)"))
+                continue;
+            const Token * const ftok = tok->tokAt(2);
+            const std::vector<const Token *> args = getArguments(ftok);
+
+            const Library::Container * c = tok->valueType()->container;
+            Library::Container::Action action = c->getAction(tok->strAt(2));
+            const Token* iterTok = nullptr;
+            if (action == Library::Container::Action::INSERT && args.size() == 2) {
+                // Skip if iterator pair
+                if (astIsIterator(args.back()))
+                    continue;
+                if (!astIsIterator(args.front()))
+                    continue;
+                iterTok = args.front();
+            } else if (action == Library::Container::Action::ERASE) {
+                if (!astIsIterator(args.front()))
+                    continue;
+                iterTok = args.front();
+            } else {
+                continue;
+            }
+
+            ValueFlow::Value val = getLifetimeObjValue(iterTok);
+            if (!val.tokvalue)
+                continue;
+            if (val.lifetimeKind != ValueFlow::Value::LifetimeKind::Iterator)
+                continue;
+            for (const LifetimeToken& lt:getLifetimeTokens(tok)) {
+                if (lt.inconclusive)
+                    continue;
+                const Token* contTok = lt.token;
+                if (isSameExpression(true, false, contTok, val.tokvalue, mSettings->library, false, false))
+                    continue;
+                mismatchingContainerIteratorError(tok, iterTok);
+            }
+
         }
     }
 }
 
 static bool isInvalidMethod(const Token * tok)
 {
-    if (Token::Match(tok->next(), ". assign|clear"))
+    if (Token::Match(tok->next(), ". assign|clear|swap"))
         return true;
     if (Token::Match(tok->next(), "%assign%"))
         return true;
-    if (isVector(tok) && Token::Match(tok->next(), ". insert|emplace|emplace_back|push_back|erase|pop_back|reserve ("))
-        return true;
+    if (const Library::Container * c = tok->valueType()->container) {
+        Library::Container::Action action = c->getAction(tok->strAt(2));
+        if (c->unstableErase) {
+            if (action == Library::Container::Action::ERASE)
+                return true;
+        }
+        if (c->unstableInsert) {
+            if (action == Library::Container::Action::RESIZE)
+                return true;
+            if (action == Library::Container::Action::CLEAR)
+                return true;
+            if (action == Library::Container::Action::PUSH)
+                return true;
+            if (action == Library::Container::Action::POP)
+                return true;
+            if (action == Library::Container::Action::INSERT)
+                return true;
+            if (action == Library::Container::Action::CHANGE)
+                return true;
+            if (action == Library::Container::Action::CHANGE_INTERNAL)
+                return true;
+            if (Token::Match(tok->next(), ". insert|emplace"))
+                return true;
+        }
+    }
     return false;
 }
 
@@ -835,10 +871,20 @@ void CheckStl::invalidContainer()
                 continue;
             if (!isInvalidMethod(tok))
                 continue;
+            std::set<nonneg int> skipVarIds;
             // Skip if the variable is assigned to
-            unsigned int skipVarId = 0;
-            if (Token::Match(tok->astTop(), "%assign%") && Token::Match(tok->astTop()->previous(), "%var%"))
-                skipVarId = tok->astTop()->previous()->varId();
+            const Token* assignExpr = tok;
+            while (assignExpr->astParent()) {
+                bool isRHS = astIsRHS(assignExpr);
+                assignExpr = assignExpr->astParent();
+                if (Token::Match(assignExpr, "%assign%")) {
+                    if (!isRHS)
+                        assignExpr = nullptr;
+                    break;
+                }
+            }
+            if (Token::Match(assignExpr, "%assign%") && Token::Match(assignExpr->astOperand1(), "%var%"))
+                skipVarIds.insert(assignExpr->astOperand1()->varId());
             const Token * endToken = nextAfterAstRightmostLeaf(tok->next()->astParent());
             if (!endToken)
                 endToken = tok->next();
@@ -847,8 +893,14 @@ void CheckStl::invalidContainer()
             PathAnalysis::Info info = PathAnalysis{endToken, library} .forwardFind([&](const PathAnalysis::Info& info) {
                 if (!info.tok->variable())
                     return false;
-                if (info.tok->varId() == skipVarId)
+                if (info.tok->varId() == 0)
                     return false;
+                if (skipVarIds.count(info.tok->varId()) > 0)
+                    return false;
+                // if (Token::simpleMatch(info.tok->next(), "."))
+                // return false;
+                if (Token::Match(info.tok->astParent(), "%assign%") && astIsLHS(info.tok))
+                    skipVarIds.insert(info.tok->varId());
                 if (info.tok->variable()->isReference() &&
                     !isVariableDecl(info.tok) &&
                     reaches(info.tok->variable()->nameToken(), tok, library, nullptr)) {
@@ -871,13 +923,15 @@ void CheckStl::invalidContainer()
                         continue;
                     if (val.lifetimeKind == ValueFlow::Value::LifetimeKind::Address)
                         continue;
+                    if (val.lifetimeKind == ValueFlow::Value::LifetimeKind::SubObject)
+                        continue;
                     if (!val.tokvalue->variable())
                         continue;
                     if (val.tokvalue->varId() != tok->varId())
                         continue;
                     ErrorPath ep;
                     // Check the iterator is created before the change
-                    if (reaches(val.tokvalue, tok, library, &ep)) {
+                    if (val.tokvalue != tok && reaches(val.tokvalue, tok, library, &ep)) {
                         v = &val;
                         errorPath = ep;
                         return true;
@@ -895,6 +949,63 @@ void CheckStl::invalidContainer()
             }
         }
     }
+}
+
+static const Token* getLoopContainer(const Token* tok)
+{
+    if (!Token::simpleMatch(tok, "for ("))
+        return nullptr;
+    const Token * sepTok = tok->next()->astOperand2();
+    if (!Token::simpleMatch(sepTok, ":"))
+        return nullptr;
+    return sepTok->astOperand2();
+}
+
+void CheckStl::invalidContainerLoop()
+{
+    const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
+    for (const Scope * scope : symbolDatabase->functionScopes) {
+        for (const Token* tok = scope->bodyStart->next(); tok != scope->bodyEnd; tok = tok->next()) {
+            const Token* contTok = getLoopContainer(tok);
+            if (!contTok)
+                continue;
+            const Token * blockStart = tok->next()->link()->next();
+            const Token * blockEnd = blockStart->link();
+            if (!Token::Match(contTok, "%var%"))
+                continue;
+            if (contTok->varId() == 0)
+                continue;
+            if (!astIsContainer(contTok))
+                continue;
+            nonneg int varid = contTok->varId();
+            for (const Token* tok2 = blockStart; tok2 != blockEnd; tok2 = tok2->next()) {
+                if (tok2->varId() != varid)
+                    continue;
+                if (!Token::Match(tok2->next(), ". %name% ("))
+                    continue;
+                if (!isInvalidMethod(tok2))
+                    continue;
+                const Scope* s = tok2->scope();
+                if (!s)
+                    continue;
+                if (isReturnScope(s->bodyEnd, &mSettings->library))
+                    continue;
+                invalidContainerLoopError(tok2, tok);
+                break;
+            }
+        }
+    }
+}
+
+void CheckStl::invalidContainerLoopError(const Token *tok, const Token * loopTok)
+{
+    ErrorPath errorPath;
+    const std::string method = tok ? tok->strAt(2) : "erase";
+    errorPath.emplace_back(loopTok, "Iterating container here.");
+
+    const std::string msg = "Calling '" + method + "' while iterating the container is invalid.";
+    errorPath.emplace_back(tok, "");
+    reportError(errorPath, Severity::error, "invalidContainerLoop", msg, CWE664, false);
 }
 
 void CheckStl::invalidContainerError(const Token *tok, const Token * contTok, const ValueFlow::Value *val, ErrorPath errorPath)
@@ -957,7 +1068,11 @@ void CheckStl::stlOutOfBounds()
         for (const Token *cond : conds) {
             const Token *vartok;
             const Token *containerToken;
-            if (Token::Match(cond, "<= %var% . %name% ( )") && Token::Match(cond->astOperand1(), "%var%")) {
+            // check in the ast that cond is of the form "%var% <= %var% . %name% ( )"
+            if (cond->str() == "<=" && Token::Match(cond->astOperand1(), "%var%") &&
+                cond->astOperand2()->str() == "(" && cond->astOperand2()->astOperand1()->str() == "." &&
+                Token::Match(cond->astOperand2()->astOperand1()->astOperand1(), "%var%") &&
+                Token::Match(cond->astOperand2()->astOperand1()->astOperand2(), "%name%")) {
                 vartok = cond->astOperand1();
                 containerToken = cond->next();
             } else {
@@ -1162,7 +1277,11 @@ void CheckStl::if_find()
         if ((scope.type != Scope::eIf && scope.type != Scope::eWhile) || !scope.classDef)
             continue;
 
-        for (const Token *tok = scope.classDef->next(); tok->str() != "{"; tok = tok->next()) {
+        const Token *conditionStart = scope.classDef->next();
+        if (conditionStart && Token::simpleMatch(conditionStart->astOperand2(), ";"))
+            conditionStart = conditionStart->astOperand2();
+
+        for (const Token *tok = conditionStart; tok->str() != "{"; tok = tok->next()) {
             const Token* funcTok = nullptr;
             const Library::Container* container = nullptr;
 
@@ -1935,6 +2054,96 @@ void CheckStl::checkDereferenceInvalidIterator()
     }
 }
 
+
+void CheckStl::checkDereferenceInvalidIterator2()
+{
+    const bool printInconclusive = (mSettings->inconclusive);
+
+    for (const Token *tok = mTokenizer->tokens(); tok; tok = tok->next()) {
+        if (Token::Match(tok, "sizeof|decltype|typeid|typeof (")) {
+            tok = tok->next()->link();
+            continue;
+        }
+
+        std::vector<ValueFlow::Value> contValues;
+        std::copy_if(tok->values().begin(), tok->values().end(), std::back_inserter(contValues), [&](const ValueFlow::Value& value) {
+            if (value.isImpossible())
+                return false;
+            if (!printInconclusive && value.isInconclusive())
+                return false;
+            return value.isContainerSizeValue();
+        });
+
+
+        // Can iterator point to END or before START?
+        for (const ValueFlow::Value& value:tok->values()) {
+            if (value.isImpossible())
+                continue;
+            if (!printInconclusive && value.isInconclusive())
+                continue;
+            if (!value.isIteratorValue())
+                continue;
+            const bool isInvalidIterator = (value.isIteratorEndValue() && value.intvalue >= 0) || (value.isIteratorStartValue() && value.intvalue < 0);
+            const ValueFlow::Value* cValue = nullptr;
+            if (!isInvalidIterator) {
+                auto it = std::find_if(contValues.begin(), contValues.end(), [&](const ValueFlow::Value& c) {
+                    if (value.isIteratorStartValue() && value.intvalue >= c.intvalue)
+                        return true;
+                    if (value.isIteratorEndValue() && -value.intvalue > c.intvalue)
+                        return true;
+                    return false;
+                });
+                if (it == contValues.end())
+                    continue;
+                cValue = &*it;
+            }
+            bool inconclusive = false;
+            bool unknown = false;
+            if (!CheckNullPointer::isPointerDeRef(tok, unknown, mSettings)) {
+                if (!unknown)
+                    continue;
+                inconclusive = true;
+            }
+            if (cValue) {
+                const ValueFlow::Value& lValue = getLifetimeObjValue(tok, true);
+                outOfBoundsError(tok, lValue.tokvalue->expressionString(), cValue, tok->expressionString(), &value);
+            } else {
+                dereferenceInvalidIteratorError(tok, &value, inconclusive);
+            }
+        }
+    }
+}
+
+void CheckStl::dereferenceInvalidIteratorError(const Token* tok, const ValueFlow::Value *value, bool inconclusive)
+{
+    const std::string& varname = tok ? tok->expressionString() : "var";
+    const std::string errmsgcond("$symbol:" + varname + '\n' + ValueFlow::eitherTheConditionIsRedundant(value ? value->condition : nullptr) + " or there is possible dereference of an invalid iterator: $symbol.");
+    if (!tok || !value) {
+        reportError(tok, Severity::error, "derefInvalidIterator", "Dereference of an invalid iterator", CWE825, false);
+        reportError(tok, Severity::warning, "derefInvalidIteratorRedundantCheck", errmsgcond, CWE825, false);
+        return;
+    }
+    if (!mSettings->isEnabled(value, inconclusive))
+        return;
+
+    const ErrorPath errorPath = getErrorPath(tok, value, "Dereference of an invalid iterator");
+
+    if (value->condition) {
+        reportError(errorPath, Severity::warning, "derefInvalidIteratorRedundantCheck", errmsgcond, CWE825, inconclusive || value->isInconclusive());
+    } else {
+        std::string errmsg;
+        errmsg = std::string(value->isKnown() ? "Dereference" : "Possible dereference") + " of an invalid iterator";
+        if (!varname.empty())
+            errmsg = "$symbol:" + varname + '\n' + errmsg + ": $symbol";
+
+        reportError(errorPath,
+                    value->isKnown() ? Severity::error : Severity::warning,
+                    "derefInvalidIterator",
+                    errmsg,
+                    CWE825, inconclusive || value->isInconclusive());
+    }
+}
+
 void CheckStl::dereferenceInvalidIteratorError(const Token* deref, const std::string &iterName)
 {
     reportError(deref, Severity::warning,
@@ -2321,3 +2530,145 @@ void CheckStl::useStlAlgorithm()
         }
     }
 }
+
+void CheckStl::knownEmptyContainerError(const Token *tok, const std::string& algo)
+{
+    const std::string var = tok ? tok->expressionString() : std::string("var");
+
+    std::string msg;
+    if (astIsIterator(tok)) {
+        msg = "Using " + algo + " with iterator '" + var + "' that is always empty.";
+    } else {
+        msg = "Iterating over container '" + var + "' that is always empty.";
+    }
+
+    reportError(tok, Severity::style,
+                "knownEmptyContainer",
+                msg, CWE398, false);
+}
+
+static bool isKnownEmptyContainer(const Token* tok)
+{
+    if (!tok)
+        return false;
+    for (const ValueFlow::Value& v:tok->values()) {
+        if (!v.isKnown())
+            continue;
+        if (!v.isContainerSizeValue())
+            continue;
+        if (v.intvalue != 0)
+            continue;
+        return true;
+    }
+    return false;
+}
+
+void CheckStl::knownEmptyContainer()
+{
+    if (!mSettings->isEnabled(Settings::STYLE))
+        return;
+    for (const Scope *function : mTokenizer->getSymbolDatabase()->functionScopes) {
+        for (const Token *tok = function->bodyStart; tok != function->bodyEnd; tok = tok->next()) {
+
+            if (!Token::Match(tok, "%name% ( !!)"))
+                continue;
+
+            // Parse range-based for loop
+            if (tok->str() == "for") {
+                if (!Token::simpleMatch(tok->next()->link(), ") {"))
+                    continue;
+                const Token *splitTok = tok->next()->astOperand2();
+                if (!Token::simpleMatch(splitTok, ":"))
+                    continue;
+                const Token* contTok = splitTok->astOperand2();
+                if (!isKnownEmptyContainer(contTok))
+                    continue;
+                knownEmptyContainerError(contTok, "");
+            } else {
+                const std::vector<const Token *> args = getArguments(tok);
+                if (args.empty())
+                    continue;
+
+                for (int argnr = 1; argnr <= args.size(); ++argnr) {
+                    const Library::ArgumentChecks::IteratorInfo *i = mSettings->library.getArgIteratorInfo(tok, argnr);
+                    if (!i)
+                        continue;
+                    const Token * const argTok = args[argnr - 1];
+                    if (!isKnownEmptyContainer(argTok))
+                        continue;
+                    knownEmptyContainerError(argTok, tok->str());
+                    break;
+
+                }
+            }
+        }
+    }
+}
+
+static bool isMutex(const Variable* var)
+{
+    const Token* tok = Token::typeDecl(var->nameToken()).first;
+    return Token::Match(tok, "std :: mutex|recursive_mutex|timed_mutex|recursive_timed_mutex|shared_mutex");
+}
+
+static bool isLockGuard(const Variable* var)
+{
+    const Token* tok = Token::typeDecl(var->nameToken()).first;
+    return Token::Match(tok, "std :: lock_guard|unique_lock|scoped_lock");
+}
+
+static bool isLocalMutex(const Variable* var, const Scope* scope)
+{
+    if (!var)
+        return false;
+    return !var->isReference() && !var->isRValueReference() && !var->isStatic() && var->scope() == scope;
+}
+
+void CheckStl::globalLockGuardError(const Token* tok)
+{
+    reportError(tok, Severity::warning,
+                "globalLockGuard",
+                "Lock guard is defined globally. Lock guards are intended to be local. A global lock guard could lead to a deadlock since it won't unlock until the end of the program.", CWE833, false);
+}
+
+void CheckStl::localMutexError(const Token* tok)
+{
+    reportError(tok, Severity::warning,
+                "localMutex",
+                "The lock is ineffective because the mutex is locked at the same scope as the mutex itself.", CWE667, false);
+}
+
+void CheckStl::checkMutexes()
+{
+    for (const Scope *function : mTokenizer->getSymbolDatabase()->functionScopes) {
+        std::set<nonneg int> checkedVars;
+        for (const Token *tok = function->bodyStart; tok != function->bodyEnd; tok = tok->next()) {
+            if (!Token::Match(tok, "%var%"))
+                continue;
+            const Variable* var = tok->variable();
+            if (!var)
+                continue;
+            if (Token::Match(tok, "%var% . lock ( )")) {
+                if (!isMutex(var))
+                    continue;
+                if (!checkedVars.insert(var->declarationId()).second)
+                    continue;
+                if (isLocalMutex(var, tok->scope()))
+                    localMutexError(tok);
+            } else if (Token::Match(tok, "%var% (|{ %var% )|}|,")) {
+                if (!isLockGuard(var))
+                    continue;
+                const Variable* mvar = tok->tokAt(2)->variable();
+                if (!mvar)
+                    continue;
+                if (!checkedVars.insert(mvar->declarationId()).second)
+                    continue;
+                if (var->isStatic() || var->isGlobal())
+                    globalLockGuardError(tok);
+                else if (isLocalMutex(mvar, tok->scope()))
+                    localMutexError(tok);
+            }
+        }
+    }
+}
+

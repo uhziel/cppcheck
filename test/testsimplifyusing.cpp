@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,12 +17,12 @@
  */
 
 
+#include "config.h"
 #include "platform.h"
 #include "settings.h"
 #include "testsuite.h"
 #include "token.h"
 #include "tokenize.h"
-#include "tokenlist.h"
 
 struct InternalError;
 
@@ -41,6 +41,11 @@ private:
     void run() OVERRIDE {
         settings0.addEnabled("style");
         settings2.addEnabled("style");
+
+        // If there are unused templates, keep those
+        settings0.checkUnusedTemplates = true;
+        settings1.checkUnusedTemplates = true;
+        settings2.checkUnusedTemplates = true;
 
         TEST_CASE(simplifyUsing1);
         TEST_CASE(simplifyUsing2);
@@ -69,6 +74,7 @@ private:
         TEST_CASE(simplifyUsing9385);
         TEST_CASE(simplifyUsing9388);
         TEST_CASE(simplifyUsing9518);
+        TEST_CASE(simplifyUsing9757);
     }
 
     std::string tok(const char code[], bool simplify = true, Settings::PlatformType type = Settings::Native, bool debugwarnings = true) {
@@ -81,9 +87,6 @@ private:
 
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-
-        if (simplify)
-            tokenizer.simplifyTokenList2();
 
         return tokenizer.tokens()->stringifyList(nullptr, !simplify);
     }
@@ -382,8 +385,8 @@ private:
                             "    FP_M(val);"
                             "};";
 
-        tok(code, true, Settings::Native, false);
-        ASSERT_EQUALS("", errout.str());
+        TODO_ASSERT_THROW(tok(code, true, Settings::Native, false), InternalError); // TODO: Do not throw AST validation exception
+        //ASSERT_EQUALS("", errout.str());
     }
 
     void simplifyUsing15() {
@@ -494,7 +497,8 @@ private:
                            "class c { "
                            "int i ; i = 0 ; "
                            "c ( ) { i -- ; } "
-                           "} ;";
+                           "} ; "
+                           "template < class T > class s { } ;";
 
         ASSERT_EQUALS(exp, tok(code, true, Settings::Win64));
     }
@@ -514,9 +518,7 @@ private:
                             "  _LONG A;\n"
                             "}";
 
-        const char exp[] = "namespace NS1 { "
-                           "} "
-                           "void f1 ( ) { "
+        const char exp[] = "void f1 ( ) { "
                            "using namespace NS1 ; "
                            "signed long long A ; "
                            "} "
@@ -630,6 +632,21 @@ private:
         ASSERT_EQUALS(exp, tok(code, false));
     }
 
+    void simplifyUsing9757() {
+        const char code[] = "enum class Type_t { Nil = 0 };\n"
+                            "template<Type_t type> class MappedType { };\n"
+                            "template<> class MappedType<Type_t::Nil> { using type = void; };\n"
+                            "std::string to_string (Example::Type_t type) {\n"
+                            "   switch (type) {}\n"
+                            "}";
+        const char exp[] = "enum class Type_t { Nil = 0 } ; "
+                           "class MappedType<Type_t::Nil> ; "
+                           "template < Type_t type > class MappedType { } ; "
+                           "class MappedType<Type_t::Nil> { } ; "
+                           "std :: string to_string ( Example :: Type_t type ) { "
+                           "switch ( type ) { } }";
+        ASSERT_EQUALS(exp, tok(code, false));
+    }
 };
 
 REGISTER_TEST(TestSimplifyUsing)

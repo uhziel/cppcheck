@@ -1,10 +1,35 @@
 // To test:
-// ~/cppcheck/cppcheck --dump misra-test.c && python ../../misra.py -verify misra-test.c.dump
+// ~/cppcheck/cppcheck --dump --suppress=uninitvar --suppress=uninitStructMember misra/misra-test.c --std=c89 && python3 ../misra.py -verify misra/misra-test.c.dump
 
 #include "path\file.h" // 20.2
+#include "file//.h" // 20.2
+#include "file/*.h" // 20.2
+#include "file'.h" // 20.2
+#include <file,.h> // 20.2
+#include "file,.h" // 20.2
+
 #include /*abc*/ "file.h" // no warning
+/*foo*/#include "file.h" // no warning
+#include "./file.h" // no warning
+#include \
+    "file.h"
+#include /*abc*/ \
+    "file.h"
+#include "fi" "le.h" // 20.3 (strings are concatenated after preprocessing)
+#include "fi" <le.h> // 20.3
+#include <fi> <le.h> // 20.3
 #include PATH "file.h" // 20.3
+#define H_20_3_ok "file.h"
+#include H_20_3_ok
+#include file.h // 20.3
+#define H_20_3_bad file.h
+#include H_20_3_bad // TODO: 20.3 Trac #9606
+#include "//file.h" // 20.2
+#include "//file.h" H_20_3_bad // 20.2 20.3
+//#include H_20_3_bad // no warning
+#include H_20_3_ok H_20_3_ok // 20.3
 #include<file.h> // no warning
+
 #include <setjmp.h> // 21.4
 #include <signal.h> // 21.5
 #include <stdio.h> //21.6
@@ -178,9 +203,53 @@ void misra_5_5_func1()
   }
 }
 
+typedef unsigned int UINT_TYPEDEF;
+struct struct_with_bitfields
+{
+  unsigned int a:2; // Compliant
+  signed int   b:2; // Compliant
+  UINT_TYPEDEF c:2; // Compliant
+  int          d:2; // 6.1 - plain int not compliant
+  signed long  f:2; // 6.1 - signed long not compliant
+  unsigned int g:1; // Compliant
+  signed int   h:1; // 6.2 - signed int with size 1 is not compliant
+};
+
+void misra6_1_fn() {
+    // "Use" occurrence should not generate warnings
+    struct_with_bitfields s;
+    s.h = 61;
+}
 
 void misra_7_1() {
   int x = 066; // 7.1
+}
+
+void misra_7_2_call_test(int a, unsigned int b, unsigned int c) { } // 2.7
+
+void misra_7_2_call_va_test(int a, ...) { } // 2.7
+
+void misra_7_2() {
+    unsigned int a = 2147483647;
+    const unsigned int b = 2147483648U;
+    const unsigned int c = 2147483648; // 7.2
+    unsigned int d = 2147483649; // 7.2
+
+    unsigned char e = 0x80; // 7.2
+    unsigned char f = 0x80U;
+    unsigned short g = 0x8000; // 7.2
+    unsigned short h = 0x8000U;
+    unsigned int i = 0x80000000; // 7.2
+    unsigned int j = 0x80000000U;
+    unsigned long long k = 0x8000000000000000; // 7.2
+    unsigned long long l = 0x8000000000000000ULL;
+
+    unsigned int m = 1 + 0x80000000; // 7.2 10.4
+
+    misra_7_2_call_test(1, 2, 2147483648U);
+    misra_7_2_call_test(1, 2, 2147483648); // 7.2
+    misra_7_2_call_test(1, 0x80000000, 3); // 7.2
+    misra_7_2_call_va_test(1, 2, 3);
 }
 
 void misra_7_3() {
@@ -191,6 +260,30 @@ void misra_7_3() {
   long double misra_7_3_e = 7.3l; //7.3
   }
 
+typedef const char* MISRA_7_4_CHAR_CONST;
+MISRA_7_4_CHAR_CONST misra_7_4_return_const_type_def (void) { return "return_typedef_const"; }
+char *misra_7_4_return_non_const (void) { return 1 + "return_non_const"; } // 7.4 18.4
+const char *misra_7_4_return_const (void) { return 1 + "return_const"; } // 18.4
+
+void misra_7_4_const_call(int a, const char* b) { } // 2.7
+void misra_7_4_const_ptr_call(int a, const char const* b) { } // 2.7
+void misra_7_4_call(int a, char* b) { } // 2.7
+
+void misra_7_4()
+{
+   const char *a = "text a";
+   char* const b = "text_b"; // 7.4
+   char *c = "text c";  // 7.4
+   char *d = 1 + "text d"; // 7.4 18.4
+   char *e = "text e" + 1 + 2; // 7.4 18.4
+   char *f = 1 + "text f" + 2; // 7.4 18.4
+   const wchar_t *g = "text_g";
+   wchar_t *h = "text_h"; // 7.4
+
+   misra_7_4_const_call(1, ("text_const_call"));
+   misra_7_4_const_ptr_call(1, ("text_const_call"));
+   misra_7_4_call(1, "text_call"); // 7.4 11.8
+}
 
 extern int a811[]; // 8.11
 
@@ -201,6 +294,72 @@ enum misra_8_12_d { misra_d1 = 1, misra_d2 = 2, misra_d3 = misra_d1 }; // no-war
 enum misra_8_12_e { misra_e1 = sizeof(int), misra_e2}; // no-crash
 
 void misra_8_14(char * restrict str) {(void)str;} // 8.14
+
+void misra_9_2() {
+    int empty_init[2][2]                     = { };                                    // 9.2
+    int empty_nested_init[2][2]              = { { } };                                // 9.2
+    int zero_init_a[5]                       = { 0 };
+    int zero_init_b[5][2]                    = { 0 };
+    int zero_init_c[2][2]                    = { { 1, 2 }, { 0 } };
+
+    const char string_wrong_level_a[12]      = { "Hello world" };                      // 9.2
+    const char string_wrong_level_b[2][20]   = "Hello world";                          // 9.2
+    const char string_correct_level_a[]      = "Hello world";
+    const char string_correct_level_b[2][12] = { "Hello world" };
+    const char *char_p_correct_level[2]      = { "Hello", [1] = "world" };
+    const char *char_p_incorrect_level[1]    = "Hello world";                          // 9.2
+
+    char **str_p = &char_p_correct_level[0];
+    char **str_p_array_correct_level[1]      = { str_p };
+    char **str_p_array_incorrect_level[1]    = { { str_p } };                          // 9.2
+
+    int array_init_incorrect_levels_a[3][2]  = { 1, 2, 3, 4, 5, 6 };                   // 9.2
+    int array_init_correct_levels_a[3][2]    = { { 1, 2 }, { 3, 4 }, { 5, 6 } };
+    int array_init_incorrect_levels_b[6]     = { { 1, 2 }, { 3, 4 }, { 5, 6 } };       // 9.2
+    int array_init_correct_levels_b[6]       = { 1, 2, 3, 4, 5, 6 };
+
+    int array_incorrect_designator_a[1]      = { [0][1] = 1 };                         // 9.2
+    int array_incorrect_designator_b[1]      = { [0] = { 1, 2 } };                     // 9.2
+    int array_incorrect_designator_c[1][2]   = { [0] = 1 };                            // 9.2
+    int array_incorrect_designator_d[2][2]   = { { 1, 2 }, [1][0] = {3, 4} };          // 9.2
+    int array_correct_designator_a[2]        = { [0] = 1, 2 };
+    int array_correct_designator_b[2]        = { [1] = 2, [0] = 1 };
+    int array_correct_designator_c[2][2]     = { { 1, 2 }, [1] = {3, 4} };
+    int array_correct_designator_d[2][2]     = { { 1, 2 }, [1][0] = 3, 4};
+
+    typedef struct {
+        int i1;
+        int i2;
+    } struct1;
+
+    typedef struct {
+        char c1;
+        struct1 is1;
+        char c2[4];
+    } struct2;
+
+    int a;
+
+    struct2 struct_empty_init                = { };                                    // 9.2
+    struct2 struct_zero_init                 = { 0 };
+    struct1 struct_missing_brackets          = 1;                                      // 9.2
+    struct2 struct_correct_init              = { 1, {2, 3}, {0} };
+    struct1 struct_array_incorrect_levels[2] = { 1, 2, 3, 4 };                         // 9.2
+    struct1 struct_array_correct_levels[2]   = { {1, 2}, {3, 4} };
+    struct1 struct_correct_designator_a      = { .i2 = 2, .i1 = 1 };
+    struct2 struct_correct_designator_b      = { .is1 = {2, 3}, { 4 } };
+    struct1 struct_correct_designator_c      = { a = 1, 2 };                           // 13.1
+    struct2 struct_incorrect_type            = { .is1 = struct_correct_designator_b }; // 9.2
+    struct2 struct_correct_type              = { .is1 = struct_correct_designator_a };
+
+    struct1 struct_array_incorrect_type[1]   = { struct_correct_designator_b };        // 9.2
+    struct1 struct_array_correct_type[1]     = { struct_correct_designator_a };
+
+    union misra_9_2_union {   // 19.2
+        char c;
+        struct1 i;
+    } u = { 3 };              // 19.2
+}
 
 void misra_9_5() {
   int x[] = {[0]=23}; // 9.5
@@ -242,7 +401,7 @@ void misra_10_1_ternary()
     int8_t i8;
     int16_t i16;
 
-    a = ui16 << ui16;
+    a = ui16 << ui16; // 10.6
     a = ui16 << (get_bool(42) ? ui16 : ui16);
     a = ui16 << (get_bool(42) ? ui16 : (get_bool(34) ? ui16 : ui16)); // 10.4
     a = ui16 << (get_bool(42) ? (get_bool(34) ? ui16 : ui16) : ui16); // 10.4
@@ -258,7 +417,24 @@ void misra_10_1_ternary()
     a = (get_bool(42) ? (get_bool(34) ? ui16 : ui8) : ui8) << (get_bool(19) ? ui16 : ui8); // 10.4
     a = (get_bool(42) ? (get_bool(34) ? i16 : ui8) : ui8) << (get_bool(19) ? ui16 : ui8); // 10.1 10.4
     a = (get_bool(42) ? (get_bool(34) ? ui16 : ui8) : ui8) << (get_bool(19) ? i16 : ui8); // 10.1 10.4
+}
 
+void misra_10_2() {
+    unsigned int u8a = 0;
+    signed char cha = 0;
+    signed int s8a = 0;
+    signed short s16a = 0;
+    float f32a = 0.0;
+    char res;
+
+    res = '0' + u8a; // 10.4
+    res = s8a + '0';
+    res = cha - '0';
+    res = '0' - s8a;
+    res = cha + ':';
+
+    res = s16a - 'a'; // 10.2
+    res = '0' + f32a; // 10.2 10.4
 }
 
 void misra_10_4(u32 x, s32 y) {
@@ -279,6 +455,10 @@ void misra_10_6(u8 x, u32 a, u32 b, char c1, char c2) {
   u16 z = ~u8 x ;//10.6
   u32 c = ( u16) ( u32 a + u32 b ); //10.6
   s32 i = c1 - c2; // FIXME: False positive for 10.6 (this is compliant). Trac #9488
+}
+void misra_10_6_1(uint32_t *a, uint16_t b, uint16_t c)
+{
+    *a = b + c ; // 10.6
 }
 
 void misra_10_8(u8 x, s32 a, s32 b) {
@@ -364,14 +544,14 @@ enum misra_12_3_e1 { M123A1, M123B1, M123C1 };
 enum misra_12_3_e2 { M123A2 = 3, M123B2 = 4, M123C2 };
 typedef enum misra_12_3_e3 { M123A3 , M123B3, M123C3 } misra_12_3_e3_t;
 typedef enum { M123A4 , M123B4, M123C4 } misra_12_3_e4_t;
-struct misra_12_3_s1 { int a; int b; int c, d; };
+struct misra_12_3_s1 { int a; int b; int c, d; }; // 12.3
 static struct misra_12_3_s1 misra_12_3_s1_inst = {
   3,
   4, 5,
   6, // no warning
 };
-typedef struct misra_12_3_s2 { int a; int b; int c, d; } misra_12_3_s2_t;
-typedef struct { int a; int b; int c, d; } misra_12_3_s3_t;
+typedef struct misra_12_3_s2 { int a; int b; int c, d; } misra_12_3_s2_t; // 12.3
+typedef struct { int a; int b; int c, d; } misra_12_3_s3_t; // 12.3
 void misra_12_3_fn1(int, int); static int misra_12_3_v5, misra_12_4_v6; // 12.3
 void misra_12_3_fn2(int a, int b) // 2.7
 { int d, e; } // 12.3
@@ -430,10 +610,23 @@ void misra_12_3(int a, int b, int c) { // no warning
   misra_12_3_fn4(misra_12_3_fn7(&a1, 32), &a1);
   misra_12_3_fn6(misra_12_3_fn5(&a1, 32), &a1);
   misra_12_3_fn6(misra_12_3_fn7(&a1, 32), &a1);
+  misra_12_3_fn7(maxlen, fn(va, unsigned long), false);
+  misra_12_3_fn8(maxlen, (unsigned long)((uintptr_t)fn(va, void*)), false);
+
+  const struct fun_t
+  {
+    int64_t x;
+    uint32_t y;
+  } moreFun[2U] =
+  {
+    { 900000000000000LL, 0x20000UL },
+    { 450000000000000LL, 0x10000UL }
+  };
 }
 
 #define MISRA12_4a 2000000000u
 #define MISRA12_4b 4000000000u
+#define volatile_macro_12_4  (*(volatile U32 *) 0xFFFFFC10u)
 void misra_12_4() {
   uint32_t x;
   bool t;
@@ -442,14 +635,18 @@ void misra_12_4() {
   x = 0u - 1u; // 12.4
   x = t ? 0u : (0u-1u); // 12.4
   x = 556200230913ULL;
+  foo(&volatile_macro_12_4); // no crash
 }
 
 struct misra_13_1_t { int a; int b; };
+uint8_t misra_13_1_x = 0;
+void misra_13_1_bar(uint8_t a[2]);
 void misra_13_1(int *p) {
   volatile int v;
   int a1[3] = {0, (*p)++, 2}; // 13.1
   int a2[3] = {0, ((*p) += 1), 2}; // 13.1
   int a3[3] = {0, ((*p) = 19), 2}; // 13.1
+  misra_13_1_bar((uint8_t[2]){ misra_13_1_x++, misra_13_1_x++ } ); // 13.1
   int b[2] = {v,1};
   struct misra_13_1_t c = { .a=4, .b=5 }; // no fp
   volatile int vv;
@@ -658,6 +855,112 @@ void misra_15_3() {
       L1:
     } else {}
   } else {}
+
+  switch (x) {
+  case 0:
+      if (x == y) {
+          goto L2; // 15.3 15.1
+      }
+      goto L2; // 15.3 15.1
+    L3:
+      foo();
+      if (a == 0x42) {
+          // Compliant:
+          goto L3; // 15.1 15.2
+      }
+      break;
+  case 1:
+      y = x;
+  L2:
+      ++x;
+      break;
+  default:
+      break;
+  }
+}
+
+void misra_15_4() {
+  misra_15_4_label:
+    return;
+
+  int x = 0;
+  int y = 0;
+  int z = 0;
+
+  // Break on different loop scopes
+  for (x = 0; x < 42; ++x) {
+    if (x==1) {
+      break;
+    }
+    for (y = 0; y < 42; ++y) { // 15.4
+      if (y==1) {
+        break;
+      }
+      if (y==2) {
+        break;
+      }
+      for (z = 0; y < 42; ++z) {
+        if (z==1) {
+          break;
+        }
+      }
+    }
+  }
+
+  // Break in while loop
+  do { // 15.4
+    if(x == 1) {
+        break;
+    }
+    if(x == 2) {
+        break
+    }
+    x++;
+  } while(x != 42);
+
+  // Break and goto in same loop
+  for (int x = 0; x < 10; ++x) { // 15.4
+    if (x == 1) {
+        break;
+    }
+    if (x == 2) {
+        goto misra_15_4_label; // 15.1 15.2
+    }
+  }
+
+  // Inner loop uses goto
+  for (x = 0; x < 42; ++x) { // 15.4
+    if (x==1) {
+      break;
+    }
+    for (y = 0; y < 42; ++y) {
+      if (y == 1) {
+        goto misra_15_4_label; // 15.1 15.2
+      }
+    }
+  }
+
+  // Allow switch with multiple breaks inside loop
+  for (x = 0; x < 42; ++x) {
+    switch (x) {
+      case 1:
+        break;
+      default:
+        break;
+    }
+  }
+
+  // Do not allow switch with multiple gotos inside loop
+  for (x = 0; x < 42; ++x) { // 15.4
+    switch (x) {
+      case 1:
+        goto misra_15_4_label; // 15.1 15.2
+        break;
+      default:
+        goto misra_15_4_label; // 15.1 15.2
+        break;
+    }
+  }
 }
 
 int misra_15_5() {
@@ -674,6 +977,14 @@ void misra_15_6() {
 #if A>1  // no-warning
   (void)0;
 #endif
+
+#if A > 0x42
+  if (true) {
+    (void)0;
+  }
+  if (true)
+#endif
+  { (void)0; } // no-warning
 
   do {} while (x<0); // no-warning
 }
@@ -933,11 +1244,17 @@ struct {
   uint8_t data_2[   ]; // 18.7
 } r18_7_struct;
 
+typedef enum {
+    R18_8_ENUM_CONSTANT_0,
+    R18_8_ENUM_CONSTANT_1,
+} r18_8_enum;
+
 void misra_18_8(int x) {
   int buf1[10];
   int buf2[sizeof(int)];
   int vla[x]; // 18.8
   static const unsigned char arr18_8_1[] = UNDEFINED_ID;
+  static uint32_t enum_test_0[R18_8_ENUM_CONSTANT_0] = {0};
 }
 
 union misra_19_2 { }; // 19.2
@@ -945,6 +1262,7 @@ union misra_19_2 { }; // 19.2
 #include "notfound.h" // 20.1
 
 #define int short // 20.4
+#define inline "foo" // no warning in C90 standard
 #undef X  // 20.5
 
 #define M_20_7_1(A)  (A+1) // 20.7
@@ -952,6 +1270,25 @@ union misra_19_2 { }; // 19.2
 #define M_20_7_3(A)  ((A)+A) // 20.7
 #define M_20_7_4(A)  x##A // 20.10 this test was written to see there are not FPs
 #define M_20_7_5(A,B)  f(A, B) // no warning
+#define M_20_7_6(x) a ## x = ( x ) // 20.10
+#define M_20_7_7(x) a  = # x // 20.10
+#define M_20_7_8(x, fn) a = fn ( # x ) // 20.7 20.10
+#define M_20_7_9(x, fn) a = (fn) ( # x ) // 20.10
+#define M_20_7_10(A, B) (A " " B)
+#define M_20_7_11(A, B, C) (A " " B " " C)
+#define M_20_7_12(A, B, C) (A " " B + C) // 20.7
+#define M_20_7_13(A, B, C) (A + B " " C) // 20.7
+#define M_20_7_14(STRING1, STRING2) (STRING1 " " STRING2)
+#define M_20_7_15(STRING1, STRING2, STRING3) (STRING1 " " STRING2 " " STRING3)
+#define M_20_7_16(STRING1, STRING2, STRING3) (STRING1 " " STRING2 + STRING3) // 20.7
+#define M_20_7_17(STRING1, STRING2, STRING3) (STRING1 + STRING2 " " STRING3) // 20.7
+
+// Compliant: M is a structure member name, not an expression
+struct { int a; } struct_20_7_s;
+#define M_20_7_6(M) struct_20_7.M
+#define M_20_7_7(M) (struct_20_7).M
+
+#define MUL(a  ,b ) ( a * b ) // 20.7
 
 #define M_20_10(a) (#a) // 20.10
 
@@ -972,53 +1309,15 @@ union misra_19_2 { }; // 19.2
 #define _macro_starts_with_lower 1 // no warning
 static int _file_scope_id_21_1 = 42; // no warning
 static int _file_scope_id_21_1_fn() { return 42; } // no warning
-static int __file_scope_id_21_1 = 42; // 21.1
-static int __file_scope_id_21_1_fn() { return 42; } // 21.1
-static int _File_scope_id_21_1 = 42; // 21.1
-static int _File_scope_id_21_1_fn() { return 42; } // 21.1
-int _external_scope_id_21_1 = 42; // 21.1
-int _external_scope_id_21_1_fn() { return 42; } // 21.1
-int __external_scope_id_21_1 = 42; // 21.1
-int __external_scope_id_21_1_fn() { return 42; } // 21.1
-int _External_scope_id_21_1 = 42; // 21.1
-int _External_scope_id_21_1_fn() { return 42; } // 21.1
-int errno = 42; // 21.1 5.5
 int misra_21_1() {
-    int _a = 42; // 21.1
+    int _a = 42; // no warning: only directives affected
     errno = EINVAL; // no warning
     _a ++; // no warning
     _exit(1); // no warning
     return _a; // no warning
 }
-int _misra_21_1_1(); // 21.1
 static int _misra_21_1_2(); // no warning
 #define errno 11 // 21.1
-struct _struct_21_1 { int a; }; // 21.1
-struct _Struct_21_1 { int a; }; // 21.1
-struct __struct_21_1 { int a; }; // 21.1
-typedef struct { int a; } _struct_21_1_t; // 21.1
-typedef struct { int a; } _Struct_21_1_t; // 21.1
-typedef struct { int a; } __struct_21_1_t; // 21.1
-enum _enum_21_1 { ENUM211_1 }; // 21.1
-enum _Enum_21_1 { ENUM211_2 }; // 21.1
-enum __enum_21_1 { ENUM211_3 }; // 21.1
-enum __enum_21_1 { ENUM211_3 }; // 21.1
-typedef enum { ENUM211_4 } _enum_21_1_t; // 21.1
-typedef enum { ENUM211_5 } _Enum_21_1_t; // 21.1
-typedef enum { ENUM211_6 } __enum_21_1_t; // 21.1
-enum enum_21_1_valid_id {
-    ENUM211_7,
-    _ENUM211_8, // 21.1
-    __ENUM211_9, // 21.1
-    _eNUM211_10, // 21.1
-    enum211_11
-};
-union _union_21_1 { int a; }; // 21.1 19.2
-union _Union_21_1 { int a; }; // 21.1 19.2
-union __union_21_1 { int a; }; // 21.1 19.2
-typedef union { int a; } _union_21_1_t; // 21.1 19.2
-typedef union { int a; } _Union_21_1_t; // 21.1 19.2
-typedef union { int a; } __union_21_1_t; // 21.1 19.2
 
 void misra_21_3() {
   p1=malloc(10); // 21.3

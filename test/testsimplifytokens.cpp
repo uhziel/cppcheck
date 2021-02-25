@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -45,6 +45,12 @@ private:
         settings0.addEnabled("portability");
         settings1.addEnabled("style");
         settings_windows.addEnabled("portability");
+
+        // If there are unused templates, keep those
+        settings0.checkUnusedTemplates = true;
+        settings1.checkUnusedTemplates = true;
+        settings_std.checkUnusedTemplates = true;
+        settings_windows.checkUnusedTemplates = true;
 
         // Make sure the Tokenizer::simplifyTokenList works.
         // The order of the simplifications is important. So this test
@@ -179,13 +185,13 @@ private:
         TEST_CASE(strcat1);
         TEST_CASE(strcat2);
 
-        TEST_CASE(simplifyAtol)
+        TEST_CASE(simplifyAtol);
 
         TEST_CASE(simplifyOperator1);
         TEST_CASE(simplifyOperator2);
 
-        TEST_CASE(simplifyArrayAccessSyntax)
-        TEST_CASE(simplify_numeric_condition)
+        TEST_CASE(simplifyArrayAccessSyntax);
+        TEST_CASE(simplify_numeric_condition);
         TEST_CASE(simplify_condition);
 
         TEST_CASE(pointeralias1);
@@ -197,7 +203,6 @@ private:
         TEST_CASE(while0);
         // ticket #3140
         TEST_CASE(while0for);
-        TEST_CASE(while1);
 
         TEST_CASE(duplicateDefinition); // ticket #3565
 
@@ -347,8 +352,8 @@ private:
 
     void simplifyTokenList1() {
         // #1717 : The simplifyErrNoInWhile needs to be used before simplifyIfAndWhileAssign..
-        ASSERT_EQUALS("; x = f ( ) ; while ( x == -1 ) { x = f ( ) ; }",
-                      tok(";while((x=f())==-1 && errno==EINTR){}",true));
+        ASSERT_EQUALS("{ x = f ( ) ; while ( x == -1 ) { x = f ( ) ; } }",
+                      tok("{ while((x=f())==-1 && errno==EINTR){}}",true));
     }
 
 
@@ -1668,7 +1673,7 @@ private:
         ASSERT_EQUALS("; x ( 1 ) = x ( 1 ) + 1 ;", tok("; x(1) += 1;"));
 
         // #2368
-        ASSERT_EQUALS("{ j = j - i ; }", tok("if (false) {} else { j -= i; }"));
+        ASSERT_EQUALS("{ j = j - i ; }", tok("{if (false) {} else { j -= i; }}"));
 
         // #2714 - wrong simplification of "a += b?c:d;"
         ASSERT_EQUALS("; a = a + ( b ? c : d ) ;", tok("; a+=b?c:d;"));
@@ -1690,21 +1695,21 @@ private:
 
 
     void cast() {
-        ASSERT_EQUALS("if ( p == 0 ) { ; }", tok("if (p == (char *)0);"));
-        ASSERT_EQUALS("return str ;", tok("return (char *)str;"));
+        ASSERT_EQUALS("{ if ( p == 0 ) { ; } }", tok("{if (p == (char *)0);}"));
+        ASSERT_EQUALS("{ return str ; }", tok("{return (char *)str;}"));
 
-        ASSERT_EQUALS("if ( * a )", tok("if ((char)*a)"));
-        ASSERT_EQUALS("if ( & a )", tok("if ((int)&a)"));
-        ASSERT_EQUALS("if ( * a )", tok("if ((unsigned int)(unsigned char)*a)"));
+        ASSERT_EQUALS("{ if ( * a ) }", tok("{if ((char)*a)}"));
+        ASSERT_EQUALS("{ if ( & a ) }", tok("{if ((int)&a)}"));
+        ASSERT_EQUALS("{ if ( * a ) }", tok("{if ((unsigned int)(unsigned char)*a)}"));
         ASSERT_EQUALS("class A { A operator* ( int ) ; } ;", tok("class A { A operator *(int); };"));
         ASSERT_EQUALS("class A { A operator* ( int ) const ; } ;", tok("class A { A operator *(int) const; };"));
-        ASSERT_EQUALS("if ( p == 0 ) { ; }", tok("if (p == (char *)(char *)0);"));
-        ASSERT_EQUALS("if ( p == 0 ) { ; }", tok("if (p == (char **)0);"));
+        ASSERT_EQUALS("{ if ( p == 0 ) { ; } }", tok("{ if (p == (char *)(char *)0); }"));
+        ASSERT_EQUALS("{ if ( p == 0 ) { ; } }", tok("{ if (p == (char **)0); }"));
 
         // no simplification as the cast may be important here. see #2897 for example
         ASSERT_EQUALS("; * ( ( char * ) p + 1 ) = 0 ;", tok("; *((char *)p + 1) = 0;"));
 
-        ASSERT_EQUALS("if ( true )", tok("if ((unsigned char)1)")); // #4164
+        ASSERT_EQUALS("{ if ( true ) }", tok("{ if ((unsigned char)1) }")); // #4164
         ASSERT_EQUALS("f ( 200 )", tok("f((unsigned char)200)"));
         ASSERT_EQUALS("f ( ( char ) 1234 )", tok("f((char)1234)")); // don't simplify downcast
     }
@@ -1801,6 +1806,12 @@ private:
                               "};\n"
                               "}\n";
         ASSERT_EQUALS(tok(code2), tok(code1));
+
+        const char code3[] = "x = L\"1\" TEXT(\"2\") L\"3\";";
+        ASSERT_EQUALS("x = L\"123\" ;", tok(code3, false, Settings::Win64));
+
+        const char code4[] = "x = TEXT(\"1\") L\"2\";";
+        ASSERT_EQUALS("x = L\"1\" L\"2\" ;", tok(code4, false, Settings::Win64));
     }
 
     void combine_wstrings() {
@@ -2032,17 +2043,17 @@ private:
 
     void parentheses1() {
         ASSERT_EQUALS("a <= 110 ;", tok("a <= (10+100);"));
-        ASSERT_EQUALS("while ( x ( ) == -1 ) { }", tok("while((x()) == -1){ }"));
+        ASSERT_EQUALS("{ while ( x ( ) == -1 ) { } }", tok("{while((x()) == -1){ }}"));
     }
 
     void parenthesesVar() {
         // remove parentheses..
         ASSERT_EQUALS("a = p ;", tok("a = (p);"));
-        ASSERT_EQUALS("if ( a < p ) { }", tok("if(a<(p)){}"));
+        ASSERT_EQUALS("void f ( ) { if ( a < p ) { } }", tok("void f(){if(a<(p)){}}"));
         ASSERT_EQUALS("void f ( ) { int p ; if ( p == -1 ) { } }", tok("void f(){int p; if((p)==-1){}}"));
         ASSERT_EQUALS("void f ( ) { int p ; if ( -1 == p ) { } }", tok("void f(){int p; if(-1==(p)){}}"));
         ASSERT_EQUALS("void f ( ) { int p ; if ( p ) { } }", tok("void f(){int p; if((p)){}}"));
-        ASSERT_EQUALS("return p ;", tok("return (p);"));
+        ASSERT_EQUALS("void f ( ) { return p ; }", tok("void f(){return (p);}"));
         ASSERT_EQUALS("void f ( ) { int * p ; if ( * p == 0 ) { } }", tok("void f(){int *p; if (*(p) == 0) {}}"));
         ASSERT_EQUALS("void f ( ) { int * p ; if ( * p == 0 ) { } }", tok("void f(){int *p; if (*p == 0) {}}"));
         ASSERT_EQUALS("void f ( int & p ) { p = 1 ; }", tok("void f(int &p) {(p) = 1;}"));
@@ -2055,7 +2066,7 @@ private:
         // keep parentheses..
         ASSERT_EQUALS("b = a ;", tok("b = (char)a;"));
         ASSERT_EQUALS("cast < char * > ( p ) ;", tok("cast<char *>(p);"));
-        ASSERT_EQUALS("return ( a + b ) * c ;", tok("return (a+b)*c;"));
+        ASSERT_EQUALS("void f ( ) { return ( a + b ) * c ; }", tok("void f(){return (a+b)*c;}"));
         ASSERT_EQUALS("void f ( ) { int p ; if ( 2 * p == 0 ) { } }", tok("void f(){int p; if (2*p == 0) {}}"));
         ASSERT_EQUALS("void f ( ) { DIR * f ; f = opendir ( dirname ) ; if ( closedir ( f ) ) { } }", tok("void f(){DIR * f = opendir(dirname);if (closedir(f)){}}"));
         ASSERT_EQUALS("void foo ( int p ) { if ( p >= 0 ) { ; } }", tok("void foo(int p){if((p)>=0);}"));
@@ -2147,11 +2158,11 @@ private:
     }
 
     void elseif1() {
-        const char code[] = "else if(ab) { cd } else { ef }gh;";
-        ASSERT_EQUALS("\n\n##file 0\n1: else { if ( ab ) { cd } else { ef } } gh ;\n", tokenizeDebugListing(code));
+        const char code[] = "void f(){ if(x) {} else if(ab) { cd } else { ef }gh; }";
+        ASSERT_EQUALS("\n\n##file 0\n1: void f ( ) { if ( x ) { } else { if ( ab ) { cd } else { ef } } gh ; }\n", tokenizeDebugListing(code));
 
         // syntax error: assert there is no segmentation fault
-        ASSERT_EQUALS("\n\n##file 0\n1: else if ( x ) { }\n", tokenizeDebugListing("else if (x) { }"));
+        ASSERT_EQUALS("\n\n##file 0\n1: void f ( ) { if ( x ) { } else { if ( x ) { } } }\n", tokenizeDebugListing("void f(){ if(x) {} else if (x) { } }"));
 
         {
             const char src[] =  "void f(int g,int f) {\n"
@@ -2263,11 +2274,13 @@ private:
 
     void sizeof5() {
         const char code[] =
+            "{"
             "const char * names[2];"
             "for (int i = 0; i != sizeof(names[0]); i++)"
-            "{}";
+            "{}"
+            "}";
         std::ostringstream expected;
-        expected << "const char * names [ 2 ] ; for ( int i = 0 ; i != " << sizeofFromTokenizer("*") << " ; i ++ ) { }";
+        expected << "{ const char * names [ 2 ] ; for ( int i = 0 ; i != " << sizeofFromTokenizer("*") << " ; i ++ ) { } }";
         ASSERT_EQUALS(expected.str(), tok(code));
     }
 
@@ -2876,7 +2889,7 @@ private:
         {
             const char code[] = "namespace std { }";
 
-            ASSERT_EQUALS("", tok(code));
+            ASSERT_EQUALS(";", tok(code));
         }
 
         {
@@ -2923,10 +2936,10 @@ private:
     }
 
     void ifassign1() {
-        ASSERT_EQUALS("; a = b ; if ( a ) { ; }", simplifyIfAndWhileAssign(";if(a=b);"));
-        ASSERT_EQUALS("; a = b ( ) ; if ( a ) { ; }", simplifyIfAndWhileAssign(";if((a=b()));"));
-        ASSERT_EQUALS("; a = b ( ) ; if ( ! ( a ) ) { ; }", simplifyIfAndWhileAssign(";if(!(a=b()));"));
-        ASSERT_EQUALS("; a . x = b ( ) ; if ( ! ( a . x ) ) { ; }", simplifyIfAndWhileAssign(";if(!(a->x=b()));"));
+        ASSERT_EQUALS("{ a = b ; if ( a ) { ; } }", simplifyIfAndWhileAssign("{if(a=b);}"));
+        ASSERT_EQUALS("{ a = b ( ) ; if ( a ) { ; } }", simplifyIfAndWhileAssign("{if((a=b()));}"));
+        ASSERT_EQUALS("{ a = b ( ) ; if ( ! ( a ) ) { ; } }", simplifyIfAndWhileAssign("{if(!(a=b()));}"));
+        ASSERT_EQUALS("{ a . x = b ( ) ; if ( ! ( a . x ) ) { ; } }", simplifyIfAndWhileAssign("{if(!(a->x=b()));}"));
         ASSERT_EQUALS("void f ( ) { A ( ) a = b ; if ( a ) { ; } }", simplifyIfAndWhileAssign("void f() { A() if(a=b); }"));
         ASSERT_EQUALS("void foo ( int a ) { a = b ( ) ; if ( a >= 0 ) { ; } }", tok("void foo(int a) {if((a=b())>=0);}"));
         TODO_ASSERT_EQUALS("void foo ( A a ) { a . c = b ( ) ; if ( 0 <= a . c ) { ; } }",
@@ -2956,17 +2969,21 @@ private:
     }
 
     void whileAssign1() {
-        ASSERT_EQUALS("; a = b ; while ( a ) { b = 0 ; a = b ; }", simplifyIfAndWhileAssign(";while(a=b) { b = 0; }"));
-        ASSERT_EQUALS("; a . b = c ; while ( a . b ) { c = 0 ; a . b = c ; }", simplifyIfAndWhileAssign(";while(a.b=c) { c=0; }"));
-        ASSERT_EQUALS("struct hfs_bnode * node ; "
+        ASSERT_EQUALS("{ a = b ; while ( a ) { b = 0 ; a = b ; } }", simplifyIfAndWhileAssign("{while(a=b) { b = 0; }}"));
+        ASSERT_EQUALS("{ a . b = c ; while ( a . b ) { c = 0 ; a . b = c ; } }", simplifyIfAndWhileAssign("{while(a.b=c) { c=0; }}"));
+        ASSERT_EQUALS("{ "
+                      "struct hfs_bnode * node ; "
                       "struct hfs_btree * tree ; "
                       "node = tree . node_hash [ i ++ ] ; "
-                      "while ( node ) { node = tree . node_hash [ i ++ ] ; }",
-                      tok("struct hfs_bnode *node;"
+                      "while ( node ) { node = tree . node_hash [ i ++ ] ; } "
+                      "}",
+                      tok("{"
+                          "struct hfs_bnode *node;"
                           "struct hfs_btree *tree;"
-                          "while ((node = tree->node_hash[i++])) { }"));
-        ASSERT_EQUALS("char * s ; s = new char [ 10 ] ; while ( ! s ) { s = new char [ 10 ] ; }",
-                      tok("char *s; while (0 == (s=new char[10])) { }"));
+                          "while ((node = tree->node_hash[i++])) { }"
+                          "}"));
+        ASSERT_EQUALS("{ char * s ; s = new char [ 10 ] ; while ( ! s ) { s = new char [ 10 ] ; } }",
+                      tok("{ char *s; while (0 == (s=new char[10])) { } }"));
     }
 
     void whileAssign2() {
@@ -2999,11 +3016,11 @@ private:
         errout.str("");
 
         Tokenizer tokenizer(&settings0, this);
-        std::istringstream istr("; while (!(m = q->push<Message>(x))) {}");
+        std::istringstream istr("{ while (!(m = q->push<Message>(x))) {} }");
         tokenizer.tokenize(istr, "test.cpp");
         tokenizer.simplifyTokenList2();
 
-        ASSERT_EQUALS("; m = q . push < Message > ( x ) ; while ( ! m ) { m = q . push < Message > ( x ) ; }", tokenizer.tokens()->stringifyList(nullptr, false));
+        ASSERT_EQUALS("{ m = q . push < Message > ( x ) ; while ( ! m ) { m = q . push < Message > ( x ) ; } }", tokenizer.tokens()->stringifyList(nullptr, false));
         ASSERT(tokenizer.tokens()->tokAt(26) != nullptr);
         if (tokenizer.tokens()->tokAt(26)) {
             ASSERT(tokenizer.tokens()->linkAt(6) == tokenizer.tokens()->tokAt(8));
@@ -3012,18 +3029,22 @@ private:
     }
 
     void doWhileAssign() {
-        ASSERT_EQUALS("; do { a = b ; } while ( a ) ;", simplifyIfAndWhileAssign(";do { } while(a=b);"));
-        ASSERT_EQUALS("; do { a . a = 0 ; a . b = c ; } while ( a . b ) ;", simplifyIfAndWhileAssign(";do { a.a = 0; } while(a.b=c);"));
-        ASSERT_EQUALS("struct hfs_bnode * node ; "
+        ASSERT_EQUALS("{ do { a = b ; } while ( a ) ; }", simplifyIfAndWhileAssign("{ do { } while(a=b); }"));
+        ASSERT_EQUALS("{ do { a . a = 0 ; a . b = c ; } while ( a . b ) ; }", simplifyIfAndWhileAssign("{ do { a.a = 0; } while(a.b=c); }"));
+        ASSERT_EQUALS("{ "
+                      "struct hfs_bnode * node ; "
                       "struct hfs_btree * tree ; "
-                      "do { node = tree . node_hash [ i ++ ] ; } while ( node ) ;",
-                      tok("struct hfs_bnode *node;"
+                      "do { node = tree . node_hash [ i ++ ] ; } while ( node ) ; "
+                      "}",
+                      tok("{"
+                          "struct hfs_bnode *node;"
                           "struct hfs_btree *tree;"
-                          "do { } while((node = tree->node_hash[i++]));"));
-        ASSERT_EQUALS("char * s ; do { s = new char [ 10 ] ; } while ( ! s ) ;",
-                      tok("char *s; do { } while (0 == (s=new char[10]));"));
+                          "do { } while((node = tree->node_hash[i++]));"
+                          "}"));
+        ASSERT_EQUALS("void foo ( ) { char * s ; do { s = new char [ 10 ] ; } while ( ! s ) ; }",
+                      tok("void foo() { char *s; do { } while (0 == (s=new char[10])); }"));
         // #4911
-        ASSERT_EQUALS("; do { current = f ( ) ; } while ( ( current ) != NULL ) ;", simplifyIfAndWhileAssign(";do { } while((current=f()) != NULL);"));
+        ASSERT_EQUALS("void foo ( ) { do { current = f ( ) ; } while ( ( current ) != NULL ) ; }", simplifyIfAndWhileAssign("void foo() { do { } while((current=f()) != NULL); }"));
     }
 
     void not1() {
@@ -3090,7 +3111,7 @@ private:
     void cAlternativeTokens() {
         ASSERT_EQUALS("void f ( ) { err |= ( ( r & s ) && ! t ) ; }",
                       tok("void f() { err or_eq ((r bitand s) and not t); }", "test.c", false));
-        ASSERT_EQUALS("void f ( ) const { r = f ( a [ 4 ] | 15 , ~ c , ! d ) ; }",
+        ASSERT_EQUALS("void f ( ) const { r = f ( a [ 4 ] | 0x0F , ~ c , ! d ) ; }",
                       tok("void f() const { r = f(a[4] bitor 0x0F, compl c, not d) ; }", "test.c", false));
 
     }
@@ -3255,7 +3276,7 @@ private:
         }
 
         {
-            ASSERT_EQUALS("; return a ? ( b = c , d ) : e ;", tok("; return a ? b = c , d : e ;")); // Keep comma
+            ASSERT_EQUALS("{ return a ? ( b = c , d ) : e ; }", tok("{ return a ? b = c , d : e ; }")); // Keep comma
         }
 
         {
@@ -3352,17 +3373,21 @@ private:
 
         {
             const char code[] = "void f () { switch(n) { case 1?0:foo(): break; }}";
-            ASSERT_EQUALS("void f ( ) { switch ( n ) { case 0 : ; break ; } }", tok(code));
+            // TODO Do not throw AST validation exception
+            TODO_ASSERT_THROW(tok(code), InternalError);
+            //ASSERT_EQUALS("void f ( ) { switch ( n ) { case 0 : ; break ; } }", tok(code));
         }
 
         {
             const char code[] = "void f () { switch(n) { case 1?0?1:0:foo(): break; }}";
-            TODO_ASSERT_EQUALS("void f ( ) { switch ( n ) { case 0 : ; break ; } }", "void f ( ) { switch ( n ) { case ( 0 ) : ; break ; } }", tok(code));
+            // TODO Do not throw AST validation exception
+            TODO_ASSERT_THROW(tok(code), InternalError);
         }
 
         {
             const char code[] = "void f () { switch(n) { case 0?foo():1: break; }}";
-            ASSERT_EQUALS("void f ( ) { switch ( n ) { case 1 : ; break ; } }", tok(code));
+            // TODO Do not throw AST validation exception
+            TODO_ASSERT_THROW(tok(code), InternalError);
         }
 
         {
@@ -3386,12 +3411,12 @@ private:
 
         {
             const char code[] = "int vals[] = { 0x13, 1?0x01:0x00 };";
-            ASSERT_EQUALS("int vals [ 2 ] = { 19 , 1 } ;", tok(code));
+            ASSERT_EQUALS("int vals [ 2 ] = { 0x13 , 0x01 } ;", tok(code));
         }
 
         {
             const char code[] = "int vals[] = { 0x13, 0?0x01:0x00 };";
-            ASSERT_EQUALS("int vals [ 2 ] = { 19 , 0 } ;", tok(code));
+            ASSERT_EQUALS("int vals [ 2 ] = { 0x13 , 0x00 } ;", tok(code));
         }
 
         {
@@ -3418,10 +3443,9 @@ private:
         }
 
         {
-            ASSERT_EQUALS("; type = decay_t < decltype ( declval < T > ( ) ) > ;",
-                          tok("; type = decay_t<decltype(true ? declval<T>() : declval<U>())>;"));
-            ASSERT_EQUALS("; type = decay_t < decltype ( declval < U > ( ) ) > ;",
-                          tok("; type = decay_t<decltype(false ? declval<T>() : declval<U>())>;"));
+            // TODO Do not throw AST validation exception
+            TODO_ASSERT_THROW(tok("; type = decay_t<decltype(true ? declval<T>() : declval<U>())>;"), InternalError);
+            TODO_ASSERT_THROW(tok("; type = decay_t<decltype(false ? declval<T>() : declval<U>())>;"), InternalError);
         }
     }
 
@@ -3452,6 +3476,11 @@ private:
         }
 
         ASSERT_EQUALS("a [ 4 ] ;", tok("a[1+3|4];"));
+        ASSERT_EQUALS("a [ 4U ] ;", tok("a[1+3|4U];"));
+        ASSERT_EQUALS("a [ 3 ] ;", tok("a[1+2&3];"));
+        ASSERT_EQUALS("a [ 3U ] ;", tok("a[1+2&3U];"));
+        ASSERT_EQUALS("a [ 5 ] ;", tok("a[1-0^4];"));
+        ASSERT_EQUALS("a [ 5U ] ;", tok("a[1-0^4U];"));
 
         ASSERT_EQUALS("x = 1 + 2 * y ;", tok("x=1+2*y;"));
         ASSERT_EQUALS("x = 7 ;", tok("x=1+2*3;"));
@@ -3460,6 +3489,7 @@ private:
         ASSERT_EQUALS("int a [ 8 ] ;", tok("int a[5+6/2];"));
         ASSERT_EQUALS("int a [ 4 ] ;", tok("int a[(10)-1-5];"));
         ASSERT_EQUALS("int a [ i - 9 ] ;", tok("int a[i - 10 + 1];"));
+        ASSERT_EQUALS("int a [ i - 11 ] ;", tok("int a[i - 10 - 1];"));
 
         ASSERT_EQUALS("x = y ;", tok("x=0+y+0-0;"));
         ASSERT_EQUALS("x = 0 ;", tok("x=0*y;"));
@@ -3477,9 +3507,9 @@ private:
 
         ASSERT_EQUALS(";", tok("; x = x + 0;"));
 
-        ASSERT_EQUALS("if ( a == 2 ) { ; }", tok("if (a==1+1);"));
-        ASSERT_EQUALS("if ( a + 2 != 6 ) { ; }", tok("if (a+1+1!=1+2+3);"));
-        ASSERT_EQUALS("if ( 4 < a ) { ; }", tok("if (14-2*5<a*4/(2*2));"));
+        ASSERT_EQUALS("{ if ( a == 2 ) { } }", tok("{if (a==1+1){}}"));
+        ASSERT_EQUALS("{ if ( a + 2 != 6 ) { } }", tok("{if (a+1+1!=1+2+3){}}"));
+        ASSERT_EQUALS("{ if ( 4 < a ) { } }", tok("{if (14-2*5<a*4/(2*2)){}}"));
 
         ASSERT_EQUALS("( y / 2 - 2 ) ;", tok("(y / 2 - 2);"));
         ASSERT_EQUALS("( y % 2 - 2 ) ;", tok("(y % 2 - 2);"));
@@ -3541,9 +3571,7 @@ private:
             ASSERT_EQUALS("void f ( int i ) { goto label ; { label : ; exit ( 0 ) ; } }", tokWithStdLib("void f (int i) { goto label; switch(i) { label: exit(0); } }"));
             //ticket #3148
             ASSERT_EQUALS("void f ( ) { MACRO ( exit ( 0 ) ) }", tokWithStdLib("void f() { MACRO(exit(0)) }"));
-            ASSERT_EQUALS("void f ( ) { MACRO ( exit ( 0 ) ; , NULL ) }", tokWithStdLib("void f() { MACRO(exit(0);, NULL) }"));
             ASSERT_EQUALS("void f ( ) { MACRO ( bar1 , exit ( 0 ) ) }", tokWithStdLib("void f() { MACRO(bar1, exit(0)) }"));
-            ASSERT_EQUALS("void f ( ) { MACRO ( exit ( 0 ) ; bar2 , foo ) }", tokWithStdLib("void f() { MACRO(exit(0); bar2, foo) }"));
         }
 
         {
@@ -4160,13 +4188,13 @@ private:
     }
 
     void while0() {
-        ASSERT_EQUALS("; x = 1 ;", tok("; do { x = 1 ; } while (0);"));
-        ASSERT_EQUALS("; return 0 ;", tok("; do { return 0; } while (0);"));
+        ASSERT_EQUALS("void foo ( ) { x = 1 ; }", tok("void foo() { do { x = 1 ; } while (0);}"));
+        ASSERT_EQUALS("void foo ( ) { return 0 ; }", tok("void foo() { do { return 0; } while (0);}"));
         ASSERT_EQUALS("void foo ( ) { goto label ; }", tok("void foo() { do { goto label; } while (0); }"));
-        ASSERT_EQUALS("; { continue ; }", tok("; do { continue ; } while (0);"));
-        ASSERT_EQUALS("; { break ; }", tok("; do { break; } while (0);"));
-        ASSERT_EQUALS(";", tok("; while (false) { a; }"));
-        ASSERT_EQUALS(";", tok("; while (false) { switch (n) { case 0: return; default: break; } n*=1; }"));
+        ASSERT_EQUALS("void foo ( ) { continue ; }", tok("void foo() { do { continue ; } while (0); }"));
+        ASSERT_EQUALS("void foo ( ) { break ; }", tok("void foo() { do { break; } while (0); }"));
+        ASSERT_EQUALS("void foo ( ) { }", tok("void foo() { while (false) { a; } }"));
+        ASSERT_EQUALS("void foo ( ) { }", tok("void foo() { while (false) { switch (n) { case 0: return; default: break; } n*=1; } }"));
     }
 
     void while0for() {
@@ -4184,16 +4212,9 @@ private:
         ASSERT_EQUALS("void f ( ) { int i ; for ( i = 0 ; i < 0 ; ++ i ) { } return i ; }", tok("void f() { int i; for (i=0;i<0;++i){ dostuff(); } return i; }"));
     }
 
-    void while1() {
-        // ticket #1197
-        const char code[] = "void do {} while (0) { }";
-        const char expected[] = "void { }";
-        ASSERT_EQUALS(expected, tok(code));
-    }
-
     void duplicateDefinition() { // #3565 - wrongly detects duplicate definition
         Tokenizer tokenizer(&settings0, this);
-        std::istringstream istr("x ; return a not_eq x;");
+        std::istringstream istr("{ x ; return a not_eq x; }");
         tokenizer.tokenize(istr, "test.c");
         Token *x_token = tokenizer.list.front()->tokAt(5);
         ASSERT_EQUALS(false, tokenizer.duplicateDefinition(&x_token));
@@ -4248,29 +4269,34 @@ private:
     }
 
     void simplifyErrNoInWhile() {
-        ASSERT_EQUALS("; while ( f ( ) ) { }",
-                      tok("; while (f() && errno == EINTR) { }"));
-        ASSERT_EQUALS("; while ( f ( ) ) { }",
-                      tok("; while (f() && (errno == EINTR)) { }"));
+        ASSERT_EQUALS("{ while ( f ( ) ) { } }",
+                      tok("{ while (f() && errno == EINTR) { } }"));
+        ASSERT_EQUALS("{ while ( f ( ) ) { } }",
+                      tok("{ while (f() && (errno == EINTR)) { } }"));
     }
 
     void simplifyFuncInWhile() {
-        ASSERT_EQUALS("int cppcheck:r1 = fclose ( f ) ; "
+        ASSERT_EQUALS("{ "
+                      "int cppcheck:r1 = fclose ( f ) ; "
                       "while ( cppcheck:r1 ) "
                       "{ "
                       "foo ( ) ; "
                       "cppcheck:r1 = fclose ( f ) ; "
+                      "} "
                       "}",
-                      tok("while(fclose(f))foo();"));
+                      tok("{while(fclose(f))foo();}"));
 
-        ASSERT_EQUALS("int cppcheck:r1 = fclose ( f ) ; "
+        ASSERT_EQUALS("{ "
+                      "int cppcheck:r1 = fclose ( f ) ; "
                       "while ( cppcheck:r1 ) "
                       "{ "
                       "; cppcheck:r1 = fclose ( f ) ; "
+                      "} "
                       "}",
-                      tok("while(fclose(f));"));
+                      tok("{while(fclose(f));}"));
 
-        ASSERT_EQUALS("int cppcheck:r1 = fclose ( f ) ; "
+        ASSERT_EQUALS("{ "
+                      "int cppcheck:r1 = fclose ( f ) ; "
                       "while ( cppcheck:r1 ) "
                       "{ "
                       "; cppcheck:r1 = fclose ( f ) ; "
@@ -4279,8 +4305,9 @@ private:
                       "while ( cppcheck:r2 ) "
                       "{ "
                       "; cppcheck:r2 = fclose ( g ) ; "
+                      "} "
                       "}",
-                      tok("while(fclose(f)); while(fclose(g));"));
+                      tok("{while(fclose(f)); while(fclose(g));}"));
     }
 
     void simplifyStructDecl1() {
@@ -4685,7 +4712,7 @@ private:
 
     // #ticket #5339 (simplify function pointer after comma)
     void simplifyFunctionPointer() {
-        ASSERT_EQUALS("f ( double x , double * y ) ;", tok("f (double x, double (*y) ());", true));
+        ASSERT_EQUALS("f ( double x , double ( * y ) ( ) ) ;", tok("f (double x, double (*y) ());", true));
     }
 
     void redundant_semicolon() {
@@ -4895,7 +4922,7 @@ private:
                             "    unsigned char override[] = {0x01, 0x02};\n"
                             "    doSomething(override, sizeof(override));\n"
                             "}\n";
-        ASSERT_EQUALS("void fun ( ) { char override [ 2 ] = { 1 , 2 } ; doSomething ( override , 2 ) ; }",
+        ASSERT_EQUALS("void fun ( ) { char override [ 2 ] = { 0x01 , 0x02 } ; doSomething ( override , 2 ) ; }",
                       tok(code, true));
     }
 

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@
 #include "valueflow.h"
 
 #include <simplecpp.h>
+#include <algorithm>
 #include <cmath>
 #include <list>
 #include <map>
@@ -33,6 +34,7 @@
 #include <utility>
 #include <vector>
 #include <cstdint>
+#include <cstring>
 
 class TestValueFlow : public TestFixture {
 public:
@@ -91,6 +93,8 @@ private:
         TEST_CASE(valueFlowForwardFunction);
         TEST_CASE(valueFlowForwardTernary);
         TEST_CASE(valueFlowForwardLambda);
+        TEST_CASE(valueFlowForwardTryCatch);
+        TEST_CASE(valueFlowForwardInconclusiveImpossible);
 
         TEST_CASE(valueFlowFwdAnalysis);
 
@@ -132,6 +136,10 @@ private:
         TEST_CASE(valueFlowCrashIncompleteCode);
 
         TEST_CASE(valueFlowCrash);
+        TEST_CASE(valueFlowHang);
+        TEST_CASE(valueFlowCrashConstructorInitialization);
+
+        TEST_CASE(valueFlowUnknownMixedOperators);
     }
 
     static bool isNotTokValue(const ValueFlow::Value &val) {
@@ -148,6 +156,42 @@ private:
             if (tok->str() == "x" && tok->linenr() == linenr) {
                 for (const ValueFlow::Value& val:tok->values()) {
                     if (val.isKnown() && val.intvalue == value)
+                        return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool testValueOfXImpossible(const char code[], unsigned int linenr, int value) {
+        // Tokenize..
+        Tokenizer tokenizer(&settings, this);
+        std::istringstream istr(code);
+        tokenizer.tokenize(istr, "test.cpp");
+
+        for (const Token *tok = tokenizer.tokens(); tok; tok = tok->next()) {
+            if (tok->str() == "x" && tok->linenr() == linenr) {
+                for (const ValueFlow::Value& val:tok->values()) {
+                    if (val.isImpossible() && val.intvalue == value)
+                        return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool testValueOfXInconclusive(const char code[], unsigned int linenr, int value) {
+        // Tokenize..
+        Tokenizer tokenizer(&settings, this);
+        std::istringstream istr(code);
+        tokenizer.tokenize(istr, "test.cpp");
+
+        for (const Token *tok = tokenizer.tokens(); tok; tok = tok->next()) {
+            if (tok->str() == "x" && tok->linenr() == linenr) {
+                for (const ValueFlow::Value& val:tok->values()) {
+                    if (val.isInconclusive() && val.intvalue == value)
                         return true;
                 }
             }
@@ -226,7 +270,7 @@ private:
         for (const Token *tok = tokenizer.tokens(); tok; tok = tok->next()) {
             if (tok->str() == "x" && tok->linenr() == linenr) {
                 for (const ValueFlow::Value &v : tok->values()) {
-                    if (v.valueType == type && Token::simpleMatch(v.tokvalue, value))
+                    if (v.valueType == type && Token::simpleMatch(v.tokvalue, value, strlen(value)))
                         return true;
                 }
             }
@@ -303,7 +347,7 @@ private:
 
         // Tokenize..
         Tokenizer tokenizer(&settings, this);
-        tokenizer.createTokens(&tokens2);
+        tokenizer.createTokens(std::move(tokens2));
         tokenizer.simplifyTokens1("");
 
         settings.debugwarnings = false;
@@ -316,6 +360,14 @@ private:
         tokenizer.tokenize(istr, "test.cpp");
         const Token *tok = Token::findmatch(tokenizer.tokens(), tokstr);
         return tok ? tok->values() : std::list<ValueFlow::Value>();
+    }
+
+    std::list<ValueFlow::Value> tokenValues(const char code[], const char tokstr[], ValueFlow::Value::ValueType vt, const Settings *s = nullptr) {
+        std::list<ValueFlow::Value> values = tokenValues(code, tokstr, s);
+        values.remove_if([&](const ValueFlow::Value& v) {
+            return v.valueType != vt;
+        });
+        return values;
     }
 
     ValueFlow::Value valueOfTok(const char code[], const char tokstr[]) {
@@ -333,7 +385,7 @@ private:
         ASSERT_EQUALS(0, valueOfTok("x(NULL);", "NULL").intvalue);
         ASSERT_EQUALS((int)('a'), valueOfTok("x='a';", "'a'").intvalue);
         ASSERT_EQUALS((int)('\n'), valueOfTok("x='\\n';", "'\\n'").intvalue);
-        ASSERT_EQUALS(0xFFFFFFFF00000000, valueOfTok("x=0xFFFFFFFF00000000;","18446744069414584320U").intvalue); // #7701
+        ASSERT_EQUALS(0xFFFFFFFF00000000, valueOfTok("x=0xFFFFFFFF00000000;","0xFFFFFFFF00000000").intvalue); // #7701
 
         // scope
         {
@@ -668,6 +720,13 @@ private:
         ASSERT_EQUALS(1U, values.size());
         ASSERT_EQUALS(123, values.empty() ? 0 : values.front().intvalue);
 
+        code  = "int f() {\n"
+                "    const int i = 1;\n"
+                "    int x = i < 0 ? 0 : 1;\n"
+                "    return x;\n"
+                "}";
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 1));
+
         // ~
         code  = "x = ~0U;";
         settings.platform(cppcheck::Platform::Native); // ensure platform is native
@@ -807,13 +866,22 @@ private:
         ASSERT_EQUALS(1U, values.size());
         ASSERT_EQUALS(1, values.back().intvalue);
 
-#define CHECK(A, B)                              \
+        code = "enum testEnum : uint32_t { a };\n"
+               "sizeof(testEnum);";
+        values = tokenValues(code,"( testEnum");
+        ASSERT_EQUALS(1U, values.size());
+        ASSERT_EQUALS(4, values.back().intvalue);
+
+#define CHECK3(A, B, C)                          \
+        do {                                     \
         code = "void f() {\n"                    \
                "    x = sizeof(" A ");\n"        \
                "}";                              \
-        values = tokenValues(code,"( " A " )");  \
+        values = tokenValues(code,"( " C " )");  \
         ASSERT_EQUALS(1U, values.size());        \
-        ASSERT_EQUALS(B, values.back().intvalue);
+        ASSERT_EQUALS(B, values.back().intvalue);\
+        } while(false)
+#define CHECK(A, B) CHECK3(A, B, A)
 
         // standard types
         CHECK("void *", settings.sizeof_pointer);
@@ -821,7 +889,11 @@ private:
         CHECK("short", settings.sizeof_short);
         CHECK("int", settings.sizeof_int);
         CHECK("long", settings.sizeof_long);
+        CHECK3("long long", settings.sizeof_long_long, "long");
         CHECK("wchar_t", settings.sizeof_wchar_t);
+        CHECK("float", settings.sizeof_float);
+        CHECK("double", settings.sizeof_double);
+        CHECK3("long double", settings.sizeof_long_double, "double");
 
         // string/char literals
         CHECK("\"asdf\"", 5);
@@ -836,6 +908,7 @@ private:
         CHECK("u'a'", 2U); // char16_t
         CHECK("U'a'", 4U); // char32_t
 #undef CHECK
+#undef CHECK3
 
         // array size
         code  = "void f() {\n"
@@ -847,13 +920,15 @@ private:
         ASSERT_EQUALS(10, values.back().intvalue);
 
 #define CHECK(A, B, C, D)                         \
+        do {                                      \
         code = "enum " A " E " B " { E0, E1 };\n" \
                "void f() {\n"                     \
                "    x = sizeof(" C ");\n"         \
                "}";                               \
         values = tokenValues(code,"( " C " )");   \
         ASSERT_EQUALS(1U, values.size());         \
-        ASSERT_EQUALS(D, values.back().intvalue);
+        ASSERT_EQUALS(D, values.back().intvalue); \
+        } while(false)
 
         // enums
         CHECK("", "", "E", settings.sizeof_int);
@@ -920,6 +995,7 @@ private:
 #undef CHECK
 
 #define CHECK(A, B)                                   \
+        do {                                          \
         code = "enum E " A " { E0, E1 };\n"           \
                "void f() {\n"                         \
                "    E arrE[] = { E0, E1 };\n"         \
@@ -927,7 +1003,8 @@ private:
                "}";                                   \
         values = tokenValues(code,"( arrE )");        \
         ASSERT_EQUALS(1U, values.size());             \
-        ASSERT_EQUALS(B * 2U, values.back().intvalue);
+        ASSERT_EQUALS(B * 2U, values.back().intvalue);\
+        } while(false)
 
         // enum array
         CHECK("", settings.sizeof_int);
@@ -953,6 +1030,7 @@ private:
 #undef CHECK
 
 #define CHECK(A, B)                                   \
+        do {                                          \
         code = "enum class E " A " { E0, E1 };\n"     \
                "void f() {\n"                         \
                "    E arrE[] = { E::E0, E::E1 };\n"   \
@@ -960,7 +1038,8 @@ private:
                "}";                                   \
         values = tokenValues(code,"( arrE )");        \
         ASSERT_EQUALS(1U, values.size());             \
-        ASSERT_EQUALS(B * 2U, values.back().intvalue);
+        ASSERT_EQUALS(B * 2U, values.back().intvalue);\
+        } while(false)
 
         // enum array
         CHECK("", settings.sizeof_int);
@@ -1009,7 +1088,7 @@ private:
                "  if (y == 32) {}"
                "}\n";
         ASSERT_EQUALS("5,Assuming that condition 'y==32' is not redundant\n"
-                      "4,Compound assignment '+=', before assignment value is 20\n"
+                      "4,Compound assignment '+=', assigned value is 20\n"
                       "2,Assignment 'x=y', assigned value is 20\n",
                       getErrorPathForX(code, 3U));
 
@@ -1118,9 +1197,6 @@ private:
                "   if (x == 4);\n"
                "}";
         ASSERT_EQUALS(true, testValueOfX(code, 2U, 3));
-        ASSERT_EQUALS("4,Assuming that condition 'x==4' is not redundant\n"
-                      "3,x is incremented, before this increment the value is 3\n",
-                      getErrorPathForX(code, 2U));
 
         // compound assignment += , -= , ...
         code = "void f(int x) {\n"
@@ -1149,15 +1225,16 @@ private:
                "   x /= 5;\n"
                "   if (x == 42);\n"
                "}";
-        ASSERT(tokenValues(code, "x ;").empty());
+        ASSERT_EQUALS(true, testValueOfX(code, 2U, 210));
 
         // bailout: assignment
         bailout("void f(int x) {\n"
                 "    x = y;\n"
                 "    if (x == 123) {}\n"
                 "}");
-        ASSERT_EQUALS_WITHOUT_LINENUMBERS("[test.cpp:2]: (debug) valueflow.cpp::valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable y\n"
-                                          "[test.cpp:2]: (debug) valueflow.cpp::valueFlowReverse bailout: assignment of x\n", errout.str());
+        ASSERT_EQUALS_WITHOUT_LINENUMBERS(
+            "[test.cpp:2]: (debug) valueflow.cpp::valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable y\n",
+            errout.str());
     }
 
     void valueFlowBeforeConditionAndAndOrOrGuard() { // guarding by &&
@@ -1272,14 +1349,14 @@ private:
         bailout("void f(int x) {\n"
                 "    y = ((x<0) ? x : ((x==2)?3:4));\n"
                 "}");
-        ASSERT_EQUALS_WITHOUT_LINENUMBERS("[test.cpp:2]: (debug) valueflow.cpp::valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable y\n"
-                                          "[test.cpp:2]: (debug) valueflow.cpp:1113:valueFlowReverse bailout: no simplification of x within ?: expression\n", errout.str());
+        ASSERT_EQUALS_WITHOUT_LINENUMBERS(
+            "[test.cpp:2]: (debug) valueflow.cpp::valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable y\n",
+            errout.str());
 
         bailout("int f(int x) {\n"
                 "  int r = x ? 1 / x : 0;\n"
                 "  if (x == 0) {}\n"
                 "}");
-        ASSERT_EQUALS_WITHOUT_LINENUMBERS("[test.cpp:2]: (debug) valueflow.cpp:1113:valueFlowReverse bailout: no simplification of x within ?: expression\n", errout.str());
 
         code = "void f(int x) {\n"
                "    int a =v x;\n"
@@ -1337,15 +1414,23 @@ private:
                 "    if (x != 123) { b = x; }\n"
                 "    if (x == 123) {}\n"
                 "}");
-        ASSERT_EQUALS_WITHOUT_LINENUMBERS("[test.cpp:2]: (debug) valueflow.cpp::valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable b\n"
-                                          "[test.cpp:2]: (debug) valueflow.cpp:1144:valueFlowReverse bailout: variable x stopping on }\n", errout.str());
+        ASSERT_EQUALS_WITHOUT_LINENUMBERS(
+            "[test.cpp:2]: (debug) valueflow.cpp::valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable b\n",
+            errout.str());
 
-        code = "void f(int x) {\n"
+        code = "void f(int x, bool abc) {\n"
                "  a = x;\n"
-               "  if (abc) { x = 1; }\n"  // <- condition must be false if x is 7 in next line
+               "  if (abc) { x = 1; }\n" // <- condition must be false if x is 7 in next line
                "  if (x == 7) { }\n"
                "}";
         ASSERT_EQUALS(true, testValueOfX(code, 2U, 7));
+
+        code = "void f(int x, bool abc) {\n"
+               "  a = x;\n"
+               "  if (abc) { x = 7; }\n" // <- condition is probably true
+               "  if (x == 7) { }\n"
+               "}";
+        ASSERT_EQUALS(false, testValueOfX(code, 2U, 7));
     }
 
     void valueFlowBeforeConditionGlobalVariables() {
@@ -1378,8 +1463,9 @@ private:
                 "    case 2: if (x==5) {} break;\n"
                 "    };\n"
                 "}");
-        ASSERT_EQUALS_WITHOUT_LINENUMBERS("[test.cpp:3]: (debug) valueflow.cpp::valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable a\n"
-                                          "[test.cpp:3]: (debug) valueflow.cpp:1180:valueFlowReverse bailout: variable x stopping on break\n", errout.str());
+        ASSERT_EQUALS_WITHOUT_LINENUMBERS(
+            "[test.cpp:3]: (debug) valueflow.cpp::valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable a\n",
+            errout.str());
 
         bailout("void f(int x, int y) {\n"
                 "    switch (y) {\n"
@@ -1387,8 +1473,9 @@ private:
                 "    case 2: if (x==5) {} break;\n"
                 "    };\n"
                 "}");
-        ASSERT_EQUALS_WITHOUT_LINENUMBERS("[test.cpp:3]: (debug) valueflow.cpp::valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable a\n"
-                                          "[test.cpp:3]: (debug) valueflow.cpp:1180:valueFlowReverse bailout: variable x stopping on return\n", errout.str());
+        ASSERT_EQUALS_WITHOUT_LINENUMBERS(
+            "[test.cpp:3]: (debug) valueflow.cpp::valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable a\n",
+            errout.str());
     }
 
     void valueFlowBeforeConditionMacro() {
@@ -1419,9 +1506,7 @@ private:
                 "    if (x==123){}\n"
                 "}");
         ASSERT_EQUALS_WITHOUT_LINENUMBERS(
-            "[test.cpp:3]: (debug) valueflow.cpp::valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable a\n"
-            "[test.cpp:4]: (debug) valueflow.cpp:1131:valueFlowReverse bailout: variable x stopping on goto label\n"
-            "[test.cpp:2]: (debug) valueflow.cpp:1813:valueFlowForwardVariable bailout: variable x. noreturn conditional scope.\n",
+            "[test.cpp:3]: (debug) valueflow.cpp::valueFlowTerminatingCondition bailout: Skipping function due to incomplete variable a\n",
             errout.str());
 
         // #5721 - FP
@@ -1435,11 +1520,6 @@ private:
                 "out:\n"
                 "    if (abc) {}\n"
                 "}\n");
-        ASSERT_EQUALS_WITHOUT_LINENUMBERS(
-            "[test.cpp:2]: (debug) valueflow.cpp:1035:valueFlowReverse bailout: assignment of abc\n"
-            "[test.cpp:8]: (debug) valueflow.cpp:1131:valueFlowReverse bailout: variable abc stopping on goto label\n"
-            "[test.cpp:3]: (debug) valueflow.cpp:1813:valueFlowForwardVariable bailout: variable abc. noreturn conditional scope.\n",
-            errout.str());
     }
 
     void valueFlowBeforeConditionForward() {
@@ -1486,6 +1566,12 @@ private:
                "    a = 2 + x;\n"
                "}";
         ASSERT_EQUALS(true, testValueOfX(code, 3U, 123));
+
+        code = "void f() {\n"
+               "    const int x(321);\n"
+               "    a = x;\n"
+               "}";
+        ASSERT_EQUALS(true, testValueOfX(code, 3U, 321));
 
         code = "void f() {\n"
                "    int x = 9;\n"
@@ -1666,7 +1752,7 @@ private:
                "    if (condition2) x = 789;\n"
                "    a = 2 + x;\n" // <- either assignment "x=123" is redundant or x can be 123 here.
                "}";
-        ASSERT_EQUALS(true,  testValueOfX(code, 5U, 123));
+        TODO_ASSERT_EQUALS(true, false, testValueOfX(code, 5U, 123));
 
         code = "void f(int a) {\n"
                "    int x = 123;\n"
@@ -1676,7 +1762,7 @@ private:
                "        ++x;\n"
                "    return 2 + x;\n"
                "}";
-        ASSERT_EQUALS(false, testValueOfX(code, 4U, 123));
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 123));
 
         code = "void f() {\n"
                "    int x = 1;\n"
@@ -1810,7 +1896,7 @@ private:
                "    y = 42 / x;\n" // <- x is 2
                "}";
         ASSERT_EQUALS(false, testValueOfX(code, 5U, 0));
-        TODO_ASSERT_EQUALS(true, false, testValueOfX(code, 5U, 2));
+        ASSERT_EQUALS(true, testValueOfX(code, 5U, 2));
 
         code = "void f(int mode) {\n"
                "    struct ABC *x;\n"
@@ -1839,7 +1925,7 @@ private:
                "        else if (x && i == 1) {}\n"
                "    }\n"
                "}\n";
-        ASSERT_EQUALS(false, testValueOfX(code, 6U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 6U, 0));
 
         // multivariables
         code = "void f(int a) {\n"
@@ -2034,6 +2120,41 @@ private:
                "}\n";
         ASSERT_EQUALS(false, testValueOfX(code, 6U, 3));
         TODO_ASSERT_EQUALS(true, false, testValueOfX(code, 6U, 2));
+
+        code = "struct Fred {\n"
+               "    static void Create(std::unique_ptr<Wilma> wilma);\n"
+               "    Fred(std::unique_ptr<Wilma> wilma);\n"
+               "    std::unique_ptr<Wilma> mWilma;\n"
+               "};\n"
+               "void Fred::Create(std::unique_ptr<Wilma> wilma) {\n"
+               "    auto fred = std::make_shared<Fred>(std::move(wilma));\n"
+               "    fred->mWilma.reset();\n"
+               "}\n"
+               "Fred::Fred(std::unique_ptr<Wilma> wilma)\n"
+               "    : mWilma(std::move(wilma)) {}\n";
+        ASSERT_EQUALS(0, tokenValues(code, "mWilma (").size());
+
+        code = "void g(unknown*);\n"
+               "int f() {\n"
+               "    int a = 1;\n"
+               "    unknown c[] = {{&a}};\n"
+               "    g(c);\n"
+               "    int x = a;\n"
+               "    return x;\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 7U, 1));
+        ASSERT_EQUALS(true, testValueOfXInconclusive(code, 7U, 1));
+
+        code = "void g(unknown&);\n"
+               "int f() {\n"
+               "    int a = 1;\n"
+               "    unknown c{&a};\n"
+               "    g(c);\n"
+               "    int x = a;\n"
+               "    return x;\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 7U, 1));
+        ASSERT_EQUALS(true, testValueOfXInconclusive(code, 7U, 1));
     }
 
     void valueFlowAfterCondition() {
@@ -2302,7 +2423,7 @@ private:
                "    for (; x && \n"
                "         x->str() != y; x = x->next()) {}\n"
                "}";
-        TODO_ASSERT_EQUALS(true, false, testValueOfX(code, 3U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 3U, 0));
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 0));
 
         code = "void f(const Token* x) {\n"
@@ -2357,6 +2478,82 @@ private:
                "}\n";
         ASSERT_EQUALS(false, testValueOfXKnown(code, 6U, 0));
         ASSERT_EQUALS(true, testValueOfX(code, 6U, 0));
+
+        // volatile variable
+        code = "void foo(const volatile int &x) {\n"
+               "    if (x==1) {\n"
+               "        return x;\n"
+               "    }"
+               "}";
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 3U, 1));
+
+        code = "void foo(const std::atomic<int> &x) {\n"
+               "    if (x==2) {\n"
+               "        return x;\n"
+               "    }"
+               "}";
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 3U, 2));
+
+        code = "int f(int i, int j) {\n"
+               "    if (i == 0) {\n"
+               "        if (j < 0)\n"
+               "            return 0;\n"
+               "        i = j+1;\n"
+               "    }\n"
+               "    int x = i;\n"
+               "    return x;\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfX(code, 8U, 0));
+
+        code = "int f(int i, int j) {\n"
+               "    if (i == 0) {\n"
+               "        if (j < 0)\n"
+               "            return 0;\n"
+               "        if (j < 0)\n"
+               "            i = j+1;\n"
+               "    }\n"
+               "    int x = i;\n"
+               "    return x;\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfX(code, 9U, 0));
+
+        code = "void g(long& a);\n"
+               "void f(long a) {\n"
+               "    if (a == 0)\n"
+               "        return;\n"
+               "    if (a > 1)\n"
+               "         g(a);\n"
+               "    int x = a;\n"
+               "    return x;\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfXImpossible(code, 8U, 0));
+
+        code = "int foo(int n) {\n"
+               "    if( n>= 8 ) {\n"
+               "        while(true) {\n"
+               "            n -= 8;\n"
+               "            if( n < 8 )\n"
+               "                break;\n"
+               "        }\n"
+               "        int x = n == 0;\n"
+               "        return x;\n"
+               "    }\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 9U, 0));
+
+        code = "bool c();\n"
+               "long f() {\n"
+               "    bool stop = false;\n"
+               "    while (!stop) {\n"
+               "        if (c())\n"
+               "            stop = true;\n"
+               "        break;\n"
+               "    }\n"
+               "    int x = !stop;\n"
+               "    return x;\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfXImpossible(code, 10U, 1));
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 10U, 0));
     }
 
     void valueFlowAfterConditionExpr() {
@@ -2412,6 +2609,49 @@ private:
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 123));
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 124));
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 125));
+
+        code = "struct A {\n"
+               "    bool g() const;\n"
+               "};\n"
+               "void f(A a) {\n"
+               "    if (a.g()) {\n"
+               "        bool x = a.g();\n"
+               "        bool a = x;\n"
+               "    }\n"
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 7U, 0));
+
+        code = "struct A {\n"
+               "    bool g() const;\n"
+               "};\n"
+               "void f(A a) {\n"
+               "    if (a.g()) {\n"
+               "        bool x = !a.g();\n"
+               "        bool a = x;\n"
+               "    }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfXKnown(code, 7U, 0));
+
+        code = "struct A {\n"
+               "    bool g() const;\n"
+               "};\n"
+               "void f(A a) {\n"
+               "    if (!a.g()) {\n"
+               "        bool x = a.g();\n"
+               "        bool a = x;\n"
+               "    }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfXKnown(code, 7U, 0));
+
+        code = "void f(std::vector<int> v) {\n"
+               "    if (v.size() == 3) {\n"
+               "        if (v.size() == 1) {\n"
+               "            int x = 1;\n"
+               "            int a = x;\n"
+               "        }\n"
+               "    }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfXKnown(code, 5U, 1));
     }
 
     void valueFlowAfterConditionSeveralNot() {
@@ -2471,6 +2711,20 @@ private:
                "    return x;\n"
                "}";
         ASSERT_EQUALS(true, testValueOfX(code, 4U, 123.45F + 67, 0.01F));
+
+        code = "void f() {\n"
+               "    int x = 123;\n"
+               "    x >>= 1;\n"
+               "    return x;\n"
+               "}";
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 61));
+
+        code = "void f() {\n"
+               "    int x = 123;\n"
+               "    x <<= 1;\n"
+               "    return x;\n"
+               "}";
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 246));
     }
 
     void valueFlowForwardCorrelatedVariables() {
@@ -2564,7 +2818,7 @@ private:
                "    return a == 1 ? x : 0;\n"  // <- x is 26
                "}";
         ASSERT_EQUALS(false, testValueOfX(code, 4U, 13));
-        TODO_ASSERT_EQUALS(true, false, testValueOfX(code, 4U, 26));
+        ASSERT_EQUALS(true, testValueOfX(code, 4U, 26));
     }
 
     void valueFlowForwardLambda() {
@@ -2585,6 +2839,40 @@ private:
                "  f();\n"
                "}";
         TODO_ASSERT_EQUALS(true, false, testValueOfX(code, 3U, 3));
+    }
+
+    void valueFlowForwardTryCatch() {
+        const char *code;
+
+        code = "void g1();\n"
+               "void g2();\n"
+               "void f()\n {"
+               "    bool x = false;\n"
+               "    try {\n"
+               "        g1();\n"
+               "        x = true;\n"
+               "        g2();\n"
+               "    }\n"
+               "    catch (...) {\n"
+               "        if (x) {}\n"
+               "    }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfX(code, 11U, 1));
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 11U, 1));
+
+        code = "void g1();\n"
+               "void g2();\n"
+               "void f()\n {"
+               "    bool x = true;\n"
+               "    try {\n"
+               "        g1();\n"
+               "        g2();\n"
+               "    }\n"
+               "    catch (...) {\n"
+               "        if (x) {}\n"
+               "    }\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfXKnown(code, 10U, 1));
     }
 
     void valueFlowBitAnd() {
@@ -2610,6 +2898,19 @@ private:
                "}";
         ASSERT_EQUALS(true, testValueOfX(code,3U,0));
         ASSERT_EQUALS(false, testValueOfX(code,3U,16));
+    }
+
+    void valueFlowForwardInconclusiveImpossible() {
+        const char *code;
+
+        code = "void foo() {\n"
+               "    bool valid = f1();\n"
+               "    if (!valid) return;\n"
+               "    std::tie(endVal, valid) = f2();\n"
+               "    bool x = !valid;"
+               "    bool b = x;" // <- not always true
+               "}\n";
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 6U, 1));
     }
 
     void valueFlowRightShift() {
@@ -2718,7 +3019,9 @@ private:
                "    s.x++;\n"
                "}";
         values = tokenValues(code, "<");
-        ASSERT_EQUALS(true, values.empty());
+        ASSERT_EQUALS(1, values.size());
+        ASSERT(values.front().isPossible());
+        ASSERT_EQUALS(true, values.front().intvalue);
 
         code = "void f() {\n"
                "  S s;\n"
@@ -2756,7 +3059,9 @@ private:
                "  }\n"
                "}";
         values = tokenValues(code, ">");
-        ASSERT_EQUALS(true, values.empty());
+        ASSERT_EQUALS(1, values.size());
+        ASSERT(values.front().isPossible());
+        ASSERT_EQUALS(true, values.front().intvalue);
 
         code = "void foo() {\n"
                "    struct ISO_PVD_s pvd;\n"
@@ -2802,6 +3107,7 @@ private:
 
     void valueFlowForLoop() {
         const char *code;
+        ValueFlow::Value value;
 
         code = "void f() {\n"
                "    for (int x = 0; x < 10; x++)\n"
@@ -3052,6 +3358,39 @@ private:
                "    a = x;\n" // <- max value is 3
                "}";
         ASSERT_EQUALS(true, testValueOfX(code, 5U, 3));
+
+        code = "void f() {\n"
+               "    int x;\n"
+               "    for (x = 0; x < 10; x++)\n"
+               "        x;\n"
+               "}";
+        std::list<ValueFlow::Value> values = tokenValues(code, "x <");
+        ASSERT(std::none_of(values.begin(), values.end(), std::mem_fn(&ValueFlow::Value::isUninitValue)));
+
+        // #9637
+        code = "void f() {\n"
+               "    unsigned int x = 0;\n"
+               "    for (x = 0; x < 2; x++) {}\n"
+               "}\n";
+        value = valueOfTok(code, "x <");
+        ASSERT(value.isPossible());
+        ASSERT_EQUALS(value.intvalue, 0);
+
+        code = "void f() {\n"
+               "    unsigned int x = 0;\n"
+               "    for (;x < 2; x++) {}\n"
+               "}\n";
+        value = valueOfTok(code, "x <");
+        ASSERT(value.isPossible());
+        ASSERT_EQUALS(0, value.intvalue);
+
+        code = "void f() {\n"
+               "    unsigned int x = 1;\n"
+               "    for (x = 0; x < 2; x++) {}\n"
+               "}\n";
+        value = valueOfTok(code, "x <");
+        ASSERT(value.isPossible());
+        ASSERT_EQUALS(0, value.intvalue);
     }
 
     void valueFlowSubFunction() {
@@ -3073,6 +3412,33 @@ private:
         ASSERT_EQUALS(true, testValueOfX(code, 7U, 0));
         ASSERT_EQUALS(true, testValueOfX(code, 7U, 17));
         ASSERT_EQUALS(true, testValueOfX(code, 7U, 42));
+
+        code = "void g(int, int) {}\n"
+               "void f(int x, int y) {\n"
+               "    g(x, y);\n"
+               "}\n"
+               "void h() {\n"
+               "    f(0, 0);\n"
+               "    f(1, 1);\n"
+               "    f(2, 2);\n"
+               "    f(3, 3);\n"
+               "    f(4, 4);\n"
+               "    f(5, 5);\n"
+               "    f(6, 6);\n"
+               "    f(7, 7);\n"
+               "    f(8, 8);\n"
+               "    f(9, 9);\n"
+               "}\n";
+        ASSERT_EQUALS(true, testValueOfX(code, 3U, 0));
+        ASSERT_EQUALS(true, testValueOfX(code, 3U, 1));
+        ASSERT_EQUALS(true, testValueOfX(code, 3U, 2));
+        ASSERT_EQUALS(true, testValueOfX(code, 3U, 3));
+        ASSERT_EQUALS(true, testValueOfX(code, 3U, 4));
+        ASSERT_EQUALS(true, testValueOfX(code, 3U, 5));
+        ASSERT_EQUALS(true, testValueOfX(code, 3U, 6));
+        ASSERT_EQUALS(true, testValueOfX(code, 3U, 7));
+        ASSERT_EQUALS(true, testValueOfX(code, 3U, 8));
+        ASSERT_EQUALS(true, testValueOfX(code, 3U, 9));
     }
     void valueFlowFunctionReturn() {
         const char *code;
@@ -3614,7 +3980,11 @@ private:
                "    int x;\n"
                "    f(x=3), return x+3;\n"
                "}";
-        ASSERT_EQUALS(0U, tokenValues(code, "x +").size());
+        values = tokenValues(code, "x +");
+        ASSERT_EQUALS(true, values.empty());
+        // ASSERT_EQUALS(1U, values.size());
+        // ASSERT(values.front().isIntValue());
+        // ASSERT_EQUALS(3, values.front().intvalue);
 
         // #8195
         code = "void foo(std::istream &is) {\n"
@@ -3644,8 +4014,7 @@ private:
                "    x = 1;\n"
                "  if (x>1) {}\n"
                "}";
-        values = tokenValues(code, "x >");
-        ASSERT_EQUALS(true, values.size() == 1U && values.front().isIntValue());
+        ASSERT_EQUALS(true, testValueOfXKnown(code, 8U, 1));
 
         // #8348 - noreturn else
         code = "int test_input_int(int a, int b) {\n"
@@ -3709,10 +4078,10 @@ private:
                "  c++;\n"
                "}\n";
         values = tokenValues(code, "c ++ ; }");
-        ASSERT_EQUALS(true, values.size() == 2);
-        ASSERT_EQUALS(true, values.front().isUninitValue() || values.back().isUninitValue());
-        ASSERT_EQUALS(true, values.front().isPossible() || values.back().isPossible());
-        ASSERT_EQUALS(true, values.front().intvalue == 0 || values.back().intvalue == 0);
+        TODO_ASSERT_EQUALS(true, false, values.size() == 2);
+        // ASSERT_EQUALS(true, values.front().isUninitValue() || values.back().isUninitValue());
+        // ASSERT_EQUALS(true, values.front().isPossible() || values.back().isPossible());
+        // ASSERT_EQUALS(true, values.front().intvalue == 0 || values.back().intvalue == 0);
 
         code = "void b(bool d, bool e) {\n"
                "  int c;\n"
@@ -3745,6 +4114,17 @@ private:
                "  d = szHdr;\n"
                "}";
         values = tokenValues(code, "szHdr ; }");
+        ASSERT_EQUALS(0, values.size());
+
+        // #9933
+        code = "struct MyStruct { size_t value; }\n"
+               "\n"
+               "void foo() {\n"
+               "    MyStruct x;\n"
+               "    fread(((char *)&x) + 0, sizeof(x), f);\n"
+               "    if (x.value < 432) {}\n"
+               "}";
+        values = tokenValues(code, "x . value");
         ASSERT_EQUALS(0, values.size());
     }
 
@@ -3874,7 +4254,7 @@ private:
                "  if (!static_cast<bool>(ints.empty()))\n"
                "    ints.front();\n"
                "}";
-        ASSERT(tokenValues(code, "ints . front").empty());
+        ASSERT_EQUALS("", isImpossibleContainerSizeValue(tokenValues(code, "ints . front"), 0));
 
         // valueFlowContainerReverse
         code = "void f(const std::list<int> &ints) {\n"
@@ -3914,6 +4294,28 @@ private:
                "  }\n"
                "}";
         ASSERT(tokenValues(code, "params [ 2 ]").empty());
+
+        // valueFlowAfterCondition
+        code = "void f(const std::vector<std::string>& v) {\n"
+               "    if(v.empty()) {\n"
+               "        v.front();\n"
+               "    }\n"
+               "}\n";
+        ASSERT_EQUALS("", isKnownContainerSizeValue(tokenValues(code, "v . front"), 0));
+
+        code = "void f(const std::vector<std::string>& v) {\n"
+               "    if(!v.empty()) {\n"
+               "        v.front();\n"
+               "    }\n"
+               "}\n";
+        ASSERT_EQUALS("", isImpossibleContainerSizeValue(tokenValues(code, "v . front"), 0));
+
+        code = "void f(const std::vector<std::string>& v) {\n"
+               "    if(!v.empty() && v[0] != \"\") {\n"
+               "        v.front();\n"
+               "    }\n"
+               "}\n";
+        ASSERT_EQUALS("", isImpossibleContainerSizeValue(tokenValues(code, "v . front"), 0));
 
         // valueFlowContainerForward
         code = "void f(const std::list<int> &ints) {\n"
@@ -4052,13 +4454,20 @@ private:
                "}";
         ASSERT_EQUALS("", isImpossibleContainerSizeValue(tokenValues(code, "s ["), 5));
 
+        code = "void f() {\n"
+               "    static std::string s;\n"
+               "    if (s.size() == 0)\n"
+               "        s = x;\n"
+               "}";
+        ASSERT(tokenValues(code, "s . size").empty());
+
         // valueFlowContainerForward, loop
         code = "void f() {\n"
                "    std::stack<Token *> links;\n"
                "    while (!links.empty() || indentlevel)\n"
                "        links.push(tok);\n"
                "}";
-        ASSERT(tokenValues(code, "links . empty").empty());
+        ASSERT_EQUALS("", isPossibleContainerSizeValue(tokenValues(code, "links . empty"), 0));
 
         // valueFlowContainerForward, function call
         code = "void f() {\n"
@@ -4195,7 +4604,7 @@ private:
                "    abort() << 123;\n"
                "  ints[0] = 0;\n"
                "}";
-        ASSERT(tokenValues(code, "ints [").empty());
+        ASSERT_EQUALS("", isImpossibleContainerSizeValue(tokenValues(code, "ints ["), 0));
 
         code = "struct A {\n"  // forward, nested function call, #9424
                "    double getMessage( std::vector<unsigned char> *message );\n"
@@ -4244,6 +4653,55 @@ private:
                "  x = s + s;\n"
                "}";
         ASSERT_EQUALS("", isKnownContainerSizeValue(tokenValues(code, "+"), 8));
+
+        code = "void f(const std::vector<int> &ints) {\n"
+               "  ints.clear();\n"
+               "  ints.front();\n"
+               "}";
+        ASSERT_EQUALS("", isKnownContainerSizeValue(tokenValues(code, "ints . front", ValueFlow::Value::CONTAINER_SIZE), 0));
+
+        code = "void f(const std::vector<int> &ints) {\n"
+               "  ints.resize(3);\n"
+               "  ints.front();\n"
+               "}";
+        ASSERT_EQUALS("", isKnownContainerSizeValue(tokenValues(code, "ints . front", ValueFlow::Value::CONTAINER_SIZE), 3));
+
+        code = "void f(const std::vector<int> &ints) {\n"
+               "  ints.resize(3);\n"
+               "  ints.push_back(3);\n"
+               "  ints.front();\n"
+               "}";
+        ASSERT_EQUALS("", isKnownContainerSizeValue(tokenValues(code, "ints . front", ValueFlow::Value::CONTAINER_SIZE), 4));
+
+        code = "void f(const std::vector<int> &ints) {\n"
+               "  ints.resize(3);\n"
+               "  ints.pop_back();\n"
+               "  ints.front();\n"
+               "}";
+        ASSERT_EQUALS("", isKnownContainerSizeValue(tokenValues(code, "ints . front", ValueFlow::Value::CONTAINER_SIZE), 2));
+
+        code = "int f(bool b) {\n"
+               "    std::map<int, int> m;\n"
+               "    if (b)\n"
+               "        m[0] = 1;\n"
+               "    return m.at(0);\n"
+               "}\n";
+        ASSERT_EQUALS("", isPossibleContainerSizeValue(tokenValues(code, "m . at", ValueFlow::Value::CONTAINER_SIZE), 0));
+
+        code = "struct Base {\n"
+               "    virtual bool GetString(std::string &) const { return false; }\n"
+               "};\n"
+               "int f() {\n"
+               "    std::string str;\n"
+               "    Base *b = GetClass();\n"
+               "    if (!b->GetString(str)) {\n"
+               "        return -2;\n"
+               "    }\n"
+               "    else {\n"
+               "        return str.front();\n"
+               "    }\n"
+               "}\n";
+        ASSERT_EQUALS(0U, tokenValues(code, "str . front").size());
     }
 
     void valueFlowDynamicBufferSize() {
@@ -4387,6 +4845,174 @@ private:
                "    if (0 * (x > 2)) {}\n"
                "}\n";
         valueOfTok(code, "x");
+
+        code = "const int& f(int, const int& y = 0);\n"
+               "const int& f(int, const int& y) {\n"
+               "    return y;\n"
+               "}\n"
+               "const int& g(int x) {\n"
+               "    const int& r = f(x);\n"
+               "    return r;\n"
+               "}\n";
+        valueOfTok(code, "0");
+
+        code = "void fa(int &colors) {\n"
+               "  for (int i = 0; i != 6; ++i) {}\n"
+               "}\n"
+               "void fb(not_null<int*> parent, int &&colors2) {\n"
+               "  dostuff(1);\n"
+               "}\n";
+        valueOfTok(code, "x");
+
+        code = "void a() {\n"
+               "  static int x = 0;\n"
+               "  struct c {\n"
+               "    c(c &&) { ++x; }\n"
+               "  };\n"
+               "}\n";
+        valueOfTok(code, "x");
+
+        code = "void f(){\n"
+               "      struct dwarf_data **pp;\n"
+               "      for (pp = (struct dwarf_data **) (void *) &state->fileline_data;\n"
+               "       *pp != NULL;\n"
+               "       pp = &(*pp)->next)\n"
+               "    ;\n"
+               "}\n";
+        valueOfTok(code, "x");
+
+        code = "void *foo(void *x);\n"
+               "void *foo(void *x)\n"
+               "{\n"
+               "    if (!x)\n"
+               "yes:\n"
+               "        return &&yes;\n"
+               "    return x;\n"
+               "}\n";
+        valueOfTok(code, "x");
+
+        code = "void f() {\n"
+               "    std::string a = b[c->d()];\n"
+               "    if(a.empty()) {\n"
+               "        INFO(std::string{\"a\"} + c->d());\n"
+               "        INFO(std::string{\"b\"} + a);\n"
+               "    }\n"
+               "}\n";
+        valueOfTok(code, "a");
+    }
+
+    void valueFlowHang() {
+        const char* code;
+        // #9659
+        code = "float arr1[4][4] = {0.0};\n"
+               "float arr2[4][4] = {0.0};\n"
+               "void f() {\n"
+               "    if(arr1[0][0] == 0.0 &&\n"
+               "       arr1[0][1] == 0.0 &&\n"
+               "       arr1[0][2] == 0.0 &&\n"
+               "       arr1[0][3] == 0.0 &&\n"
+               "       arr1[1][0] == 0.0 &&\n"
+               "       arr1[1][1] == 0.0 &&\n"
+               "       arr1[1][2] == 0.0 &&\n"
+               "       arr1[1][3] == 0.0 &&\n"
+               "       arr1[2][0] == 0.0 &&\n"
+               "       arr1[2][1] == 0.0 &&\n"
+               "       arr1[2][2] == 0.0 &&\n"
+               "       arr1[2][3] == 0.0 &&\n"
+               "       arr1[3][0] == 0.0 &&\n"
+               "       arr1[3][1] == 0.0 &&\n"
+               "       arr1[3][2] == 0.0 &&\n"
+               "       arr1[3][3] == 0.0 &&\n"
+               "       arr2[0][0] == 0.0 &&\n"
+               "       arr2[0][1] == 0.0 &&\n"
+               "       arr2[0][2] == 0.0 &&\n"
+               "       arr2[0][3] == 0.0 &&\n"
+               "       arr2[1][0] == 0.0 &&\n"
+               "       arr2[1][1] == 0.0 &&\n"
+               "       arr2[1][2] == 0.0 &&\n"
+               "       arr2[1][3] == 0.0 &&\n"
+               "       arr2[2][0] == 0.0 &&\n"
+               "       arr2[2][1] == 0.0 &&\n"
+               "       arr2[2][2] == 0.0 &&\n"
+               "       arr2[2][3] == 0.0 &&\n"
+               "       arr2[3][0] == 0.0 &&\n"
+               "       arr2[3][1] == 0.0 &&\n"
+               "       arr2[3][2] == 0.0 &&\n"
+               "       arr2[3][3] == 0.0\n"
+               "       ) {}\n"
+               "}\n";
+        valueOfTok(code, "x");
+
+        code = "namespace {\n"
+               "struct a {\n"
+               "  a(...) {}\n"
+               "  a(std::initializer_list<std::pair<int, std::vector<std::vector<a>>>>) {}\n"
+               "} b{{0, {{&b, &b, &b, &b}}},\n"
+               "    {0,\n"
+               "     {{&b, &b, &b, &b, &b, &b, &b, &b, &b, &b},\n"
+               "      {{&b, &b, &b, &b, &b, &b, &b}}}},\n"
+               "    {0,\n"
+               "     {{&b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b},\n"
+               "      {&b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b}}}};\n"
+               "}\n";
+        valueOfTok(code, "x");
+
+        code = "namespace {\n"
+               "struct a {\n"
+               "  a(...) {}\n"
+               "  a(std::initializer_list<std::pair<int, std::vector<std::vector<a>>>>) {}\n"
+               "} b{{0, {{&b}}},\n"
+               "    {0, {{&b}}},\n"
+               "    {0, {{&b}}},\n"
+               "    {0, {{&b}}},\n"
+               "    {0, {{&b}, {&b, &b, &b, &b, &b, &b, &b, &b, &b, &b, {&b}}}},\n"
+               "    {0,\n"
+               "     {{&b},\n"
+               "      {&b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b, &b,\n"
+               "       &b}}}};\n"
+               "}\n";
+        valueOfTok(code, "x");
+    }
+
+    void valueFlowCrashConstructorInitialization() { // #9577
+        const char* code;
+        code = "void Error()\n"
+               "{\n"
+               "    VfsPath path(\"\");\n"
+               "    path = path / amtype;\n"
+               "    size_t base = 0;\n"
+               "    VfsPath standard(\"standard\");\n"
+               "    if (path != standard)\n"
+               "    {\n"
+               "    }\n"
+               "}";
+        valueOfTok(code, "path");
+
+        code = "void Error()\n"
+               "{\n"
+               "    VfsPath path;\n"
+               "    path = path / amtype;\n"
+               "    size_t base = 0;\n"
+               "    VfsPath standard(\"standard\");\n"
+               "    if (path != standard)\n"
+               "    {\n"
+               "    }\n"
+               "}";
+        valueOfTok(code, "path");
+    }
+
+    void valueFlowUnknownMixedOperators() {
+        const char *code= "int f(int a, int b, bool x) {\n"
+                          "  if (a == 1 && (!(b == 2 && x))) {\n"
+                          "  } else {\n"
+                          "    if (x) {\n"
+                          "    }\n"
+                          "  }\n"
+                          "\n"
+                          "  return 0;\n"
+                          "}" ;
+
+        ASSERT_EQUALS(false, testValueOfXKnown(code, 4U, 1));
     }
 };
 

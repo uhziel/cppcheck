@@ -1,6 +1,6 @@
 /*
 * Cppcheck - A tool for static C/C++ code analysis
-* Copyright (C) 2007-2019 Cppcheck team.
+* Copyright (C) 2007-2020 Cppcheck team.
 *
 * This program is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@
 
 #include "analyzerinfo.h"
 
+#include "errorlogger.h"
 #include "path.h"
 #include "utils.h"
 
@@ -69,7 +70,7 @@ void AnalyzerInformation::close()
     }
 }
 
-static bool skipAnalysis(const std::string &analyzerInfoFile, unsigned long long checksum, std::list<ErrorLogger::ErrorMessage> *errors)
+static bool skipAnalysis(const std::string &analyzerInfoFile, unsigned long long checksum, std::list<ErrorMessage> *errors)
 {
     tinyxml2::XMLDocument doc;
     const tinyxml2::XMLError error = doc.LoadFile(analyzerInfoFile.c_str());
@@ -122,7 +123,7 @@ std::string AnalyzerInformation::getAnalyzerInfoFile(const std::string &buildDir
     return filename;
 }
 
-bool AnalyzerInformation::analyzeFile(const std::string &buildDir, const std::string &sourcefile, const std::string &cfg, unsigned long long checksum, std::list<ErrorLogger::ErrorMessage> *errors)
+bool AnalyzerInformation::analyzeFile(const std::string &buildDir, const std::string &sourcefile, const std::string &cfg, unsigned long long checksum, std::list<ErrorMessage> *errors)
 {
     if (buildDir.empty() || sourcefile.empty())
         return true;
@@ -144,7 +145,7 @@ bool AnalyzerInformation::analyzeFile(const std::string &buildDir, const std::st
     return true;
 }
 
-void AnalyzerInformation::reportErr(const ErrorLogger::ErrorMessage &msg, bool /*verbose*/)
+void AnalyzerInformation::reportErr(const ErrorMessage &msg, bool /*verbose*/)
 {
     if (mOutputStream.is_open())
         mOutputStream << msg.toXML() << '\n';

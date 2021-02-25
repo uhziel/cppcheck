@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,13 +23,13 @@
 #include "checkbufferoverrun.h"
 
 #include "astutils.h"
+#include "errorlogger.h"
 #include "library.h"
 #include "mathlib.h"
 #include "settings.h"
 #include "symboldatabase.h"
 #include "token.h"
 #include "tokenize.h"
-#include "tokenlist.h"
 #include "utils.h"
 #include "valueflow.h"
 
@@ -38,8 +38,6 @@
 #include <cstdlib>
 #include <numeric> // std::accumulate
 #include <sstream>
-#include <stack>
-#include <utility>
 
 //---------------------------------------------------------------------------
 
@@ -182,7 +180,7 @@ static int getMinFormatStringOutputLength(const std::vector<const Token*> &param
 
 //---------------------------------------------------------------------------
 
-static bool getDimensionsEtc(const Token * const arrayToken, const Settings *settings, std::vector<Dimension> * const dimensions, ErrorPath * const errorPath, bool * const mightBeLarger)
+static bool getDimensionsEtc(const Token * const arrayToken, const Settings *settings, std::vector<Dimension> * const dimensions, ErrorPath * const errorPath, bool * const mightBeLarger, MathLib::bigint* path)
 {
     const Token *array = arrayToken;
     while (Token::Match(array, ".|::"))
@@ -210,17 +208,22 @@ static bool getDimensionsEtc(const Token * const arrayToken, const Settings *set
         const ValueFlow::Value *value = getBufferSizeValue(array);
         if (!value)
             return false;
+        if (path)
+            *path = value->path;
         *errorPath = value->errorPath;
         Dimension dim;
         dim.known = value->isKnown();
         dim.tok = nullptr;
-        dim.num = value->intvalue / array->valueType()->typeSize(*settings);
+        const int typeSize = array->valueType()->typeSize(*settings);
+        if (typeSize == 0)
+            return false;
+        dim.num = value->intvalue / typeSize;
         dimensions->emplace_back(dim);
     }
     return !dimensions->empty();
 }
 
-static std::vector<const ValueFlow::Value *> getOverrunIndexValues(const Token *tok, const Token *arrayToken, const std::vector<Dimension> &dimensions, const std::vector<const Token *> &indexTokens)
+static std::vector<const ValueFlow::Value *> getOverrunIndexValues(const Token *tok, const Token *arrayToken, const std::vector<Dimension> &dimensions, const std::vector<const Token *> &indexTokens, MathLib::bigint path)
 {
     const Token *array = arrayToken;
     while (Token::Match(array, ".|::"))
@@ -235,6 +238,8 @@ static std::vector<const ValueFlow::Value *> getOverrunIndexValues(const Token *
             const ValueFlow::Value *value = indexTokens[i]->getMaxValue(cond == 1);
             indexValues.push_back(value);
             if (!value)
+                continue;
+            if (value->path != path)
                 continue;
             if (!value->isKnown()) {
                 if (!allKnown)
@@ -300,12 +305,13 @@ void CheckBufferOverrun::arrayIndex()
         std::vector<Dimension> dimensions;
         ErrorPath errorPath;
         bool mightBeLarger = false;
-        if (!getDimensionsEtc(tok->astOperand1(), mSettings, &dimensions, &errorPath, &mightBeLarger))
+        MathLib::bigint path = 0;
+        if (!getDimensionsEtc(tok->astOperand1(), mSettings, &dimensions, &errorPath, &mightBeLarger, &path))
             continue;
 
         // Positive index
         if (!mightBeLarger) { // TODO check arrays with dim 1 also
-            const std::vector<const ValueFlow::Value *> &indexValues = getOverrunIndexValues(tok, tok->astOperand1(), dimensions, indexTokens);
+            const std::vector<const ValueFlow::Value *> &indexValues = getOverrunIndexValues(tok, tok->astOperand1(), dimensions, indexTokens, path);
             if (!indexValues.empty())
                 arrayIndexError(tok, dimensions, indexValues);
         }
@@ -449,14 +455,15 @@ void CheckBufferOverrun::pointerArithmetic()
         std::vector<Dimension> dimensions;
         ErrorPath errorPath;
         bool mightBeLarger = false;
-        if (!getDimensionsEtc(arrayToken, mSettings, &dimensions, &errorPath, &mightBeLarger))
+        MathLib::bigint path = 0;
+        if (!getDimensionsEtc(arrayToken, mSettings, &dimensions, &errorPath, &mightBeLarger, &path))
             continue;
 
         if (tok->str() == "+") {
             // Positive index
             if (!mightBeLarger) { // TODO check arrays with dim 1 also
                 const std::vector<const Token *> indexTokens{indexToken};
-                const std::vector<const ValueFlow::Value *> &indexValues = getOverrunIndexValues(tok, arrayToken, dimensions, indexTokens);
+                const std::vector<const ValueFlow::Value *> &indexValues = getOverrunIndexValues(tok, arrayToken, dimensions, indexTokens, path);
                 if (!indexValues.empty())
                     pointerArithmeticError(tok, indexToken, indexValues.front());
             }
@@ -559,7 +566,7 @@ static bool checkBufferSize(const Token *ftok, const Library::ArgumentChecks::Mi
         return minsize.value <= bufferSize;
     case Library::ArgumentChecks::MinSize::Type::NONE:
         break;
-    };
+    }
     return true;
 }
 
@@ -719,17 +726,6 @@ void CheckBufferOverrun::terminateStrncpyError(const Token *tok, const std::stri
                 "assumes buffer is null-terminated.", CWE170, true);
 }
 
-void CheckBufferOverrun::bufferNotZeroTerminatedError(const Token *tok, const std::string &varname, const std::string &function)
-{
-    const std::string errmsg = "$symbol:" + varname + '\n' +
-                               "$symbol:" + function + '\n' +
-                               "The buffer '" + varname + "' is not null-terminated after the call to " + function + "().\n"
-                               "The buffer '" + varname + "' is not null-terminated after the call to " + function + "(). "
-                               "This will cause bugs later in the code if the code assumes the buffer is null-terminated.";
-
-    reportError(tok, Severity::warning, "bufferNotZeroTerminated", errmsg, CWE170, true);
-}
-
 
 
 //---------------------------------------------------------------------------
@@ -841,7 +837,7 @@ bool CheckBufferOverrun::analyseWholeProgram1(const CTU::FileInfo *ctu, const st
 {
     const CTU::FileInfo::FunctionCall *functionCall = nullptr;
 
-    const std::list<ErrorLogger::ErrorMessage::FileLocation> &locationList =
+    const std::list<ErrorMessage::FileLocation> &locationList =
         ctu->getErrorPath(CTU::FileInfo::InvalidValueType::bufferOverflow,
                           unsafeUsage,
                           callsMap,
@@ -868,12 +864,12 @@ bool CheckBufferOverrun::analyseWholeProgram1(const CTU::FileInfo *ctu, const st
         cwe = CWE_POINTER_ARITHMETIC_OVERFLOW;
     }
 
-    const ErrorLogger::ErrorMessage errorMessage(locationList,
-            emptyString,
-            Severity::error,
-            errmsg,
-            errorId,
-            cwe, false);
+    const ErrorMessage errorMessage(locationList,
+                                    emptyString,
+                                    Severity::error,
+                                    errmsg,
+                                    errorId,
+                                    cwe, false);
     errorLogger.reportErr(errorMessage);
 
     return true;

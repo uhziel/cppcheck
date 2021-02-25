@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,15 +23,15 @@
 //---------------------------------------------------------------------------
 
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
-#include "errorlogger.h"
+#include "errortypes.h"
 #include "utils.h"
 
 class Library;
 class Settings;
-class Scope;
 class Token;
 class Variable;
 
@@ -47,6 +47,9 @@ enum class ChildrenToVisit {
  * Visit AST nodes recursively. The order is not "well defined"
  */
 void visitAstNodes(const Token *ast, std::function<ChildrenToVisit(const Token *)> visitor);
+void visitAstNodes(Token *ast, std::function<ChildrenToVisit(Token *)> visitor);
+
+const Token* findAstNode(const Token* ast, const std::function<bool(const Token*)>& pred);
 
 std::vector<const Token*> astFlatten(const Token* tok, const char* op);
 
@@ -87,14 +90,40 @@ std::string astCanonicalType(const Token *expr);
 /** Is given syntax tree a variable comparison against value */
 const Token * astIsVariableComparison(const Token *tok, const std::string &comp, const std::string &rhs, const Token **vartok=nullptr);
 
-bool isTemporary(bool cpp, const Token* tok, const Library* library);
+bool isTemporary(bool cpp, const Token* tok, const Library* library, bool unknown = false);
+
+const Token* previousBeforeAstLeftmostLeaf(const Token* tok);
+Token* previousBeforeAstLeftmostLeaf(Token* tok);
 
 const Token * nextAfterAstRightmostLeaf(const Token * tok);
+Token* nextAfterAstRightmostLeaf(Token* tok);
 
 Token* astParentSkipParens(Token* tok);
 const Token* astParentSkipParens(const Token* tok);
 
 const Token* getParentMember(const Token * tok);
+
+const Token* getParentLifetime(const Token* tok);
+
+bool astIsLHS(const Token* tok);
+bool astIsRHS(const Token* tok);
+
+Token* getCondTok(Token* tok);
+const Token* getCondTok(const Token* tok);
+
+Token* getCondTokFromEnd(Token* endBlock);
+const Token* getCondTokFromEnd(const Token* endBlock);
+
+/**
+ * Extract for loop values: loopvar varid, init value, step value, last value (inclusive)
+ */
+bool extractForLoopValues(const Token *forToken,
+                          nonneg int * const varid,
+                          bool * const knownInitValue,
+                          long long * const initValue,
+                          bool * const partialCond,
+                          long long * const stepValue,
+                          long long * const lastValue);
 
 bool precedes(const Token * tok1, const Token * tok2);
 
@@ -125,8 +154,13 @@ bool isWithoutSideEffects(bool cpp, const Token* tok);
 
 bool isUniqueExpression(const Token* tok);
 
+bool isEscapeFunction(const Token* ftok, const Library* library);
+
 /** Is scope a return scope (scope will unconditionally return) */
-bool isReturnScope(const Token * const endToken, const Library * library=nullptr, bool functionScope=false);
+bool isReturnScope(const Token* const endToken,
+                   const Library* library = nullptr,
+                   const Token** unknownFunc = nullptr,
+                   bool functionScope = false);
 
 /// Return the token to the function and the argument number
 const Token * getTokenArgumentFunction(const Token * tok, int& argn);
@@ -153,7 +187,8 @@ bool isVariableChangedByFunctionCall(const Token *tok, int indirect, nonneg int 
 bool isVariableChangedByFunctionCall(const Token *tok, int indirect, const Settings *settings, bool *inconclusive);
 
 /** Is variable changed in block of code? */
-bool isVariableChanged(const Token *start, const Token *end, const nonneg int varid, bool globalvar, const Settings *settings, bool cpp, int depth = 20);
+bool isVariableChanged(const Token *start, const Token *end, const nonneg int exprid, bool globalvar, const Settings *settings, bool cpp, int depth = 20);
+bool isVariableChanged(const Token *start, const Token *end, int indirect, const nonneg int exprid, bool globalvar, const Settings *settings, bool cpp, int depth = 20);
 
 bool isVariableChanged(const Token *tok, int indirect, const Settings *settings, bool cpp, int depth = 20);
 
@@ -166,11 +201,20 @@ bool isVariablesChanged(const Token* start,
                         const Settings* settings,
                         bool cpp);
 
-const Token* findVariableChanged(const Token *start, const Token *end, int indirect, const nonneg int varid, bool globalvar, const Settings *settings, bool cpp, int depth = 20);
-Token* findVariableChanged(Token *start, const Token *end, int indirect, const nonneg int varid, bool globalvar, const Settings *settings, bool cpp, int depth = 20);
+bool isThisChanged(const Token* start, const Token* end, int indirect, const Settings* settings, bool cpp);
+
+const Token* findVariableChanged(const Token *start, const Token *end, int indirect, const nonneg int exprid, bool globalvar, const Settings *settings, bool cpp, int depth = 20);
+Token* findVariableChanged(Token *start, const Token *end, int indirect, const nonneg int exprid, bool globalvar, const Settings *settings, bool cpp, int depth = 20);
+
+bool isExpressionChanged(const Token* expr,
+                         const Token* start,
+                         const Token* end,
+                         const Settings* settings,
+                         bool cpp,
+                         int depth = 20);
 
 /// If token is an alias if another variable
-bool isAliasOf(const Token *tok, nonneg int varid);
+bool isAliasOf(const Token *tok, nonneg int varid, bool* inconclusive = nullptr);
 
 bool isAliased(const Variable *var);
 
@@ -193,6 +237,7 @@ const Token *findLambdaStartToken(const Token *last);
  * \return nullptr or the }
  */
 const Token *findLambdaEndToken(const Token *first);
+Token* findLambdaEndToken(Token* first);
 
 bool isLikelyStream(bool cpp, const Token *stream);
 
@@ -205,12 +250,17 @@ bool isLikelyStreamRead(bool cpp, const Token *op);
 
 bool isCPPCast(const Token* tok);
 
-bool isConstVarExpression(const Token *tok);
+bool isConstVarExpression(const Token *tok, const char * skipMatch = nullptr);
 
 const Variable *getLHSVariable(const Token *tok);
 
+std::vector<const Variable*> getLHSVariables(const Token* tok);
+
 bool isScopeBracket(const Token* tok);
 
+bool isNullOperand(const Token *expr);
+
+bool isGlobalData(const Token *expr, bool cpp);
 /**
  * Forward data flow analysis for checks
  *  - unused value
@@ -252,8 +302,6 @@ public:
     bool possiblyAliased(const Token *expr, const Token *startToken) const;
 
     std::set<int> getExprVarIds(const Token* expr, bool* localOut = nullptr, bool* unknownVarIdOut = nullptr) const;
-
-    static bool isNullOperand(const Token *expr);
 private:
     static bool isEscapedAlias(const Token* expr);
 

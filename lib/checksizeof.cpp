@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,7 +20,6 @@
 //---------------------------------------------------------------------------
 #include "checksizeof.h"
 
-#include "errorlogger.h"
 #include "settings.h"
 #include "symboldatabase.h"
 #include "token.h"
@@ -177,6 +176,9 @@ void CheckSizeof::checkSizeofForPointerSize()
 
             while (Token::Match(variable2, "%var% ::|."))
                 variable2 = variable2->tokAt(2);
+
+            if (!variable)
+                continue;
 
             // Ensure the variables are in the symbol database
             // Also ensure the variables are pointers

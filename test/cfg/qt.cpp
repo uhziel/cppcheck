@@ -40,7 +40,7 @@ QString::iterator QString3()
 {
     QString qstring1;
     QString qstring2;
-    // cppcheck-suppress iterators2
+    // cppcheck-suppress mismatchingContainers
     for (QString::iterator it = qstring1.begin(); it != qstring2.end(); ++it)
     {}
 
@@ -88,15 +88,14 @@ void QList1(QList<int> intListArg)
     QList<QString> qstringList2 = {"one", "two"};
     (void)qstringList2[1];
     qstringList2.clear();
-    // TODO: cppcheck-suppress containerOutOfBounds #9243
+    // cppcheck-suppress containerOutOfBounds
     (void)qstringList2[1];
 
     QList<QString> qstringList3;
     qstringList3 << "one" << "two";
-    // FIXME: The following containerOutOfBounds suppression is wrong #9242
-    // Please remove the suppression as soon as this is fixed
-    // cppcheck-suppress containerOutOfBounds
     (void)qstringList3[1];
+    // FIXME: The following should have a containerOutOfBounds suppression #9242
+    (void)qstringList3[3];
     // cppcheck-suppress ignoredReturnValue
     qstringList3.startsWith("one");
     // cppcheck-suppress ignoredReturnValue
@@ -118,7 +117,7 @@ void QList1(QList<int> intListArg)
     qstringList4.append("a");
     (void)qstringList4[0];
     qstringList4.clear();
-    // TODO: cppcheck-suppress containerOutOfBounds #9243
+    // cppcheck-suppress containerOutOfBounds
     (void)qstringList4[0];
 }
 
@@ -126,12 +125,12 @@ QList<int>::iterator QList3()
 {
     QList<int> qlist1;
     QList<int> qlist2;
-    // cppcheck-suppress iterators2
+    // cppcheck-suppress mismatchingContainers
     for (QList<int>::iterator it = qlist1.begin(); it != qlist2.end(); ++it)
     {}
 
     QList<int>::iterator it = qlist1.begin();
-    // TODO: cppcheck-suppress returnDanglingLifetime
+    // cppcheck-suppress returnDanglingLifetime
     return it;
 }
 
@@ -162,12 +161,12 @@ QLinkedList<int>::iterator QLinkedList3()
 {
     QLinkedList<int> intQLinkedList1;
     QLinkedList<int> intQLinkedList2;
-    // cppcheck-suppress iterators2
+    // cppcheck-suppress mismatchingContainers
     for (QLinkedList<int>::iterator it = intQLinkedList1.begin(); it != intQLinkedList2.end(); ++it)
     {}
 
     QLinkedList<int>::iterator it = intQLinkedList1.begin();
-    // TODO: cppcheck-suppress returnDanglingLifetime
+    // cppcheck-suppress returnDanglingLifetime
     return it;
 }
 
@@ -195,10 +194,9 @@ void QStringList1(QStringList stringlistArg)
 
     QStringList qstringlist3;
     qstringlist3 << "one" << "two";
-    // FIXME: The following containerOutOfBounds suppression is wrong #9242
-    // Please remove the suppression as soon as this is fixed
-    // cppcheck-suppress containerOutOfBounds
     (void)qstringlist3[1];
+    // FIXME: The following should have a containerOutOfBounds suppression #9242
+    (void)qstringlist3[3];
     // cppcheck-suppress ignoredReturnValue
     qstringlist3.startsWith("one");
     // cppcheck-suppress ignoredReturnValue
@@ -219,7 +217,7 @@ QStringList::iterator QStringList2()
 {
     QStringList qstringlist1;
     QStringList qstringlist2;
-    // cppcheck-suppress iterators2
+    // cppcheck-suppress mismatchingContainers
     for (QStringList::iterator it = qstringlist1.begin(); it != qstringlist2.end(); ++it)
     {}
 
@@ -249,10 +247,9 @@ void QVector1(QVector<int> intVectorArg)
 
     QVector<QString> qstringVector3;
     qstringVector3 << "one" << "two";
-    // FIXME: The following containerOutOfBounds suppression is wrong #9242
-    // Please remove the suppression as soon as this is fixed
-    // cppcheck-suppress containerOutOfBounds
     (void)qstringVector3[1];
+    // FIXME: The following should have a containerOutOfBounds suppression #9242
+    (void)qstringVector3[3];
     // cppcheck-suppress ignoredReturnValue
     qstringVector3.startsWith("one");
     // cppcheck-suppress ignoredReturnValue
@@ -273,12 +270,12 @@ QVector<int>::iterator QVector2()
 {
     QVector<int> qvector1;
     QVector<int> qvector2;
-    // cppcheck-suppress iterators2
+    // cppcheck-suppress mismatchingContainers
     for (QVector<int>::iterator it = qvector1.begin(); it != qvector2.end(); ++it)
     {}
 
     QVector<int>::iterator it = qvector1.begin();
-    // TODO cppcheck-suppress returnDanglingLifetime
+    // cppcheck-suppress returnDanglingLifetime
     return it;
 }
 
@@ -302,10 +299,9 @@ void QStack1(QStack<int> intStackArg)
 
     QStack<QString> qstringStack2;
     qstringStack2 << "one" << "two";
-    // FIXME: The following containerOutOfBounds suppression is wrong #9242
-    // Please remove the suppression as soon as this is fixed
-    // cppcheck-suppress containerOutOfBounds
     (void)qstringStack2[1];
+    // FIXME: The following should have a containerOutOfBounds suppression #9242
+    (void)qstringStack2[3];
     // cppcheck-suppress ignoredReturnValue
     qstringStack2.startsWith("one");
     // cppcheck-suppress ignoredReturnValue
@@ -326,12 +322,12 @@ QStack<int>::iterator QStack2()
 {
     QStack<int> qstack1;
     QStack<int> qstack2;
-    // cppcheck-suppress iterators2
+    // cppcheck-suppress mismatchingContainers
     for (QStack<int>::iterator it = qstack1.begin(); it != qstack2.end(); ++it)
     {}
 
     QStack<int>::iterator it = qstack1.begin();
-    // TODO cppcheck-suppress returnDanglingLifetime
+    // cppcheck-suppress returnDanglingLifetime
     return it;
 }
 
@@ -364,22 +360,18 @@ public:
 
 void MacroTest2_test()
 {
-    // TODO: remove suppression when #9002 is fixed
-    // cppcheck-suppress checkLibraryFunction
     QString str = MacroTest2::tr("hello");
     QByteArray ba = str.toLatin1();
     printf(ba.data());
 
 #ifndef QT_NO_DEPRECATED
-    // TODO: remove suppression when #9002 is fixed
-    // cppcheck-suppress checkLibraryFunction
     str = MacroTest2::trUtf8("test2");
     ba = str.toLatin1();
     printf(ba.data());
 #endif
 }
 
-void validCode(int * pIntPtr)
+void validCode(int * pIntPtr, QString & qstrArg)
 {
     if (QFile::exists("test")) {
     }
@@ -404,6 +396,19 @@ void validCode(int * pIntPtr)
     Q_DECLARE_LOGGING_CATEGORY(logging_category_test);
     QT_FORWARD_DECLARE_CLASS(forwardDeclaredClass);
     QT_FORWARD_DECLARE_STRUCT(forwardDeclaredStruct);
+
+    //#9650
+    QString qstr1(qstrArg);
+    if (qstr1.length() == 1) {
+    } else {
+        qstr1.chop(1);
+        if (qstr1.length() == 1) {}
+    }
+    if (qstr1.length() == 1) {
+    } else {
+        qstr1.remove(1);
+        if (qstr1.length() == 1) {}
+    }
 }
 
 void ignoredReturnValue()

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,6 +24,7 @@
 #include "tokenize.h"
 #include "tokenlist.h"
 
+#include <cstring>
 
 class TestAstUtils : public TestFixture {
 public:
@@ -35,7 +36,9 @@ private:
     void run() OVERRIDE {
         TEST_CASE(findLambdaEndToken);
         TEST_CASE(findLambdaStartToken);
+        TEST_CASE(isNullOperand);
         TEST_CASE(isReturnScope);
+        TEST_CASE(isSameExpression);
         TEST_CASE(isVariableChanged);
         TEST_CASE(isVariableChangedByFunctionCall);
         TEST_CASE(nextAfterAstRightmostLeaf);
@@ -51,7 +54,8 @@ private:
     }
 
     void findLambdaEndToken() {
-        ASSERT(nullptr == ::findLambdaEndToken(nullptr));
+        const Token* nullTok = nullptr;
+        ASSERT(nullptr == ::findLambdaEndToken(nullTok));
         ASSERT_EQUALS(false, findLambdaEndToken("void f() { }"));
         ASSERT_EQUALS(true, findLambdaEndToken("[]{ }"));
         ASSERT_EQUALS(true, findLambdaEndToken("[]{ return 0; }"));
@@ -105,6 +109,27 @@ private:
         ASSERT_EQUALS(true, findLambdaStartToken("[](void) constexpr -> const * const* int { return x; }"));
     }
 
+    bool isNullOperand(const char code[]) {
+        Settings settings;
+        Tokenizer tokenizer(&settings, this);
+        std::istringstream istr(code);
+        tokenizer.tokenize(istr, "test.cpp");
+        return ::isNullOperand(tokenizer.tokens());
+    }
+
+    void isNullOperand() {
+        ASSERT_EQUALS(true, isNullOperand("(void*)0;"));
+        ASSERT_EQUALS(true, isNullOperand("(void*)0U;"));
+        ASSERT_EQUALS(true, isNullOperand("(void*)0x0LL;"));
+        ASSERT_EQUALS(true, isNullOperand("NULL;"));
+        ASSERT_EQUALS(true, isNullOperand("nullptr;"));
+        ASSERT_EQUALS(true, isNullOperand("(void*)NULL;"));
+        ASSERT_EQUALS(true, isNullOperand("static_cast<int*>(0);"));
+        ASSERT_EQUALS(false, isNullOperand("0;"));
+        ASSERT_EQUALS(false, isNullOperand("(void*)0.0;"));
+        ASSERT_EQUALS(false, isNullOperand("(void*)1;"));
+    }
+
     bool isReturnScope(const char code[], int offset) {
         Settings settings;
         Tokenizer tokenizer(&settings, this);
@@ -135,13 +160,52 @@ private:
         ASSERT_EQUALS(true, isReturnScope("void positiveTokenOffset() { return; }", 7));
     }
 
+    bool isSameExpression(const char code[], const char tokStr1[], const char tokStr2[]) {
+        Settings settings;
+        Library library;
+        Tokenizer tokenizer(&settings, this);
+        std::istringstream istr(code);
+        tokenizer.tokenize(istr, "test.cpp");
+        tokenizer.simplifyTokens1("");
+        const Token * const tok1 = Token::findsimplematch(tokenizer.tokens(), tokStr1, strlen(tokStr1));
+        const Token * const tok2 = Token::findsimplematch(tok1->next(), tokStr2, strlen(tokStr2));
+        return ::isSameExpression(false, false, tok1, tok2, library, false, true, nullptr);
+    }
+
+    void isSameExpression() {
+        ASSERT_EQUALS(true,  isSameExpression("x = 1 + 1;", "1", "1"));
+        ASSERT_EQUALS(false, isSameExpression("x = 1 + 1u;", "1", "1u"));
+        ASSERT_EQUALS(true,  isSameExpression("x = 1.0 + 1.0;", "1.0", "1.0"));
+        ASSERT_EQUALS(false, isSameExpression("x = 1.0f + 1.0;", "1.0f", "1.0"));
+        ASSERT_EQUALS(false, isSameExpression("x = 1L + 1;", "1L", "1"));
+        ASSERT_EQUALS(true,  isSameExpression("x = 0.0f + 0x0p+0f;", "0.0f", "0x0p+0f"));
+        ASSERT_EQUALS(true,  isSameExpression("x < x;", "x", "x"));
+        ASSERT_EQUALS(false, isSameExpression("x < y;", "x", "y"));
+        ASSERT_EQUALS(true,  isSameExpression("(x + 1) < (x + 1);", "+", "+"));
+        ASSERT_EQUALS(false, isSameExpression("(x + 1) < (x + 1L);", "+", "+"));
+        ASSERT_EQUALS(true,  isSameExpression("(1 + x) < (x + 1);", "+", "+"));
+        ASSERT_EQUALS(false, isSameExpression("(1.0l + x) < (1.0 + x);", "+", "+"));
+        ASSERT_EQUALS(true,  isSameExpression("(0.0 + x) < (x + 0x0p+0);", "+", "+"));
+        ASSERT_EQUALS(true,  isSameExpression("void f() {double y = 1e1; (x + y) < (x + 10.0); } ", "+", "+"));
+        ASSERT_EQUALS(true,  isSameExpression("void f() {double y = 1e1; (x + 10.0) < (y + x); } ", "+", "+"));
+        ASSERT_EQUALS(true,  isSameExpression("void f() {double y = 1e1; double z = 10.0; (x + y) < (x + z); } ", "+", "+"));
+        ASSERT_EQUALS(true,  isSameExpression("A + A", "A", "A"));
+
+        //https://trac.cppcheck.net/ticket/9700
+        ASSERT_EQUALS(true, isSameExpression("A::B + A::B;", "::", "::"));
+        ASSERT_EQUALS(false, isSameExpression("A::B + A::C;", "::", "::"));
+        ASSERT_EQUALS(true, isSameExpression("A::B* get() { if(x) return new A::B(true); else return new A::B(true); }", "new", "new"));
+        ASSERT_EQUALS(false, isSameExpression("A::B* get() { if(x) return new A::B(true); else return new A::C(true); }", "new", "new"));
+        ASSERT_EQUALS(true, true);
+    }
+
     bool isVariableChanged(const char code[], const char startPattern[], const char endPattern[]) {
         Settings settings;
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        const Token * const tok1 = Token::findsimplematch(tokenizer.tokens(), startPattern);
-        const Token * const tok2 = Token::findsimplematch(tokenizer.tokens(), endPattern);
+        const Token * const tok1 = Token::findsimplematch(tokenizer.tokens(), startPattern, strlen(startPattern));
+        const Token * const tok2 = Token::findsimplematch(tokenizer.tokens(), endPattern, strlen(endPattern));
         return ::isVariableChanged(tok1,tok2,1,false,&settings,true);
     }
 
@@ -184,8 +248,8 @@ private:
         Tokenizer tokenizer(&settings, this);
         std::istringstream istr(code);
         tokenizer.tokenize(istr, "test.cpp");
-        const Token * tok = Token::findsimplematch(tokenizer.tokens(), parentPattern);
-        return Token::simpleMatch(::nextAfterAstRightmostLeaf(tok), rightPattern);
+        const Token * tok = Token::findsimplematch(tokenizer.tokens(), parentPattern, strlen(parentPattern));
+        return Token::simpleMatch(::nextAfterAstRightmostLeaf(tok), rightPattern, strlen(rightPattern));
     }
 
     void nextAfterAstRightmostLeaf() {

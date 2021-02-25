@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,6 +24,7 @@
 #include "check.h"
 #include "config.h"
 #include "tokenize.h"
+#include "symboldatabase.h"
 
 #include <list>
 #include <map>
@@ -62,7 +63,6 @@ public:
         // can't be a simplified check .. the 'sizeof' is used.
         checkClass.checkMemset();
         checkClass.constructors();
-        checkClass.operatorEq();
         checkClass.privateFunctions();
         checkClass.operatorEqRetRefThis();
         checkClass.thisSubtraction();
@@ -73,11 +73,13 @@ public:
         checkClass.virtualDestructor();
         checkClass.checkConst();
         checkClass.copyconstructors();
-        checkClass.checkVirtualFunctionCallInConstructor();
+        // FIXME: Only report warnings for inherited classes
+        // checkClass.checkVirtualFunctionCallInConstructor();
         checkClass.checkDuplInheritedMembers();
         checkClass.checkExplicitConstructors();
         checkClass.checkCopyCtorAndEqOperator();
         checkClass.checkOverride();
+        checkClass.checkThisUseAfterFree();
         checkClass.checkUnsafeClassRefMember();
     }
 
@@ -101,9 +103,6 @@ public:
      */
     void checkMemset();
     void checkMemsetType(const Scope *start, const Token *tok, const Scope *type, bool allocation, std::set<const Scope *> parsedTypes);
-
-    /** @brief 'operator=' should return something and it should not be const. */
-    void operatorEq();
 
     /** @brief 'operator=' should return reference to *this */
     void operatorEqRetRefThis();    // Warning upon no "return *this;"
@@ -143,6 +142,9 @@ public:
     /** @brief Check that the override keyword is used when overriding virtual functions */
     void checkOverride();
 
+    /** @brief When "self pointer" is destroyed, 'this' might become invalid. */
+    void checkThisUseAfterFree();
+
     /** @brief Unsafe class check - const reference member */
     void checkUnsafeClassRefMember();
 
@@ -157,7 +159,7 @@ private:
     void noCopyConstructorError(const Scope *scope, bool isdefault, const Token *alloc, bool inconclusive);
     void noOperatorEqError(const Scope *scope, bool isdefault, const Token *alloc, bool inconclusive);
     void noDestructorError(const Scope *scope, bool isdefault, const Token *alloc);
-    void uninitVarError(const Token *tok, bool isprivate, const std::string &classname, const std::string &varname, bool inconclusive);
+    void uninitVarError(const Token *tok, bool isprivate, Function::Type functionType, const std::string &classname, const std::string &varname, bool inconclusive);
     void operatorEqVarError(const Token *tok, const std::string &classname, const std::string &varname, bool inconclusive);
     void unusedPrivateFunctionError(const Token *tok, const std::string &classname, const std::string &funcname);
     void memsetError(const Token *tok, const std::string &memfunc, const std::string &classname, const std::string &type);
@@ -165,7 +167,6 @@ private:
     void memsetErrorFloat(const Token *tok, const std::string &type);
     void mallocOnClassError(const Token* tok, const std::string &memfunc, const Token* classTok, const std::string &classname);
     void mallocOnClassWarning(const Token* tok, const std::string &memfunc, const Token* classTok);
-    void operatorEqReturnError(const Token *tok, const std::string &className);
     void virtualDestructorError(const Token *tok, const std::string &Base, const std::string &Derived, bool inconclusive);
     void thisSubtractionError(const Token *tok);
     void operatorEqRetRefThisError(const Token *tok);
@@ -182,6 +183,7 @@ private:
     void duplInheritedMembersError(const Token* tok1, const Token* tok2, const std::string &derivedName, const std::string &baseName, const std::string &variableName, bool derivedIsStruct, bool baseIsStruct);
     void copyCtorAndEqOperatorError(const Token *tok, const std::string &classname, bool isStruct, bool hasCopyCtor);
     void overrideError(const Function *funcInBase, const Function *funcInDerived);
+    void thisUseAfterFree(const Token *self, const Token *free, const Token *use);
     void unsafeClassRefMemberError(const Token *tok, const std::string &varname);
 
     void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const OVERRIDE {
@@ -193,8 +195,8 @@ private:
         c.noCopyConstructorError(nullptr, false, nullptr, false);
         c.noOperatorEqError(nullptr, false, nullptr, false);
         c.noDestructorError(nullptr, false, nullptr);
-        c.uninitVarError(nullptr, false, "classname", "varname", false);
-        c.uninitVarError(nullptr, true, "classname", "varnamepriv", false);
+        c.uninitVarError(nullptr, false, Function::eConstructor, "classname", "varname", false);
+        c.uninitVarError(nullptr, true, Function::eConstructor, "classname", "varnamepriv", false);
         c.operatorEqVarError(nullptr, "classname", emptyString, false);
         c.unusedPrivateFunctionError(nullptr, "classname", "funcname");
         c.memsetError(nullptr, "memfunc", "classname", "class");
@@ -202,7 +204,6 @@ private:
         c.memsetErrorFloat(nullptr, "class");
         c.mallocOnClassWarning(nullptr, "malloc", nullptr);
         c.mallocOnClassError(nullptr, "malloc", nullptr, "std::string");
-        c.operatorEqReturnError(nullptr, "class");
         c.virtualDestructorError(nullptr, "Base", "Derived", false);
         c.thisSubtractionError(nullptr);
         c.operatorEqRetRefThisError(nullptr);
@@ -219,6 +220,7 @@ private:
         c.pureVirtualFunctionCallInConstructorError(nullptr, std::list<const Token *>(), "f");
         c.virtualFunctionCallInConstructorError(nullptr, std::list<const Token *>(), "f");
         c.overrideError(nullptr, nullptr);
+        c.thisUseAfterFree(nullptr, nullptr, nullptr);
         c.unsafeClassRefMemberError(nullptr, "UnsafeClass::var");
     }
 
@@ -237,7 +239,6 @@ private:
                "- Warn if memory for classes is allocated with malloc()\n"
                "- If it's a base class, check that the destructor is virtual\n"
                "- Are there unused private functions?\n"
-               "- 'operator=' should return reference to self\n"
                "- 'operator=' should check for assignment to self\n"
                "- Constness for member functions\n"
                "- Order of initializations\n"
@@ -248,6 +249,7 @@ private:
                "- Duplicated inherited data members\n"
                // disabled for now "- If 'copy constructor' defined, 'operator=' also should be defined and vice versa\n"
                "- Check that arbitrary usage of public interface does not result in division by zero\n"
+               "- Delete \"self pointer\" and then access 'this'\n"
                "- Check that the 'override' keyword is used when overriding virtual functions\n";
     }
 
@@ -340,6 +342,12 @@ private:
     static bool canNotCopy(const Scope *scope);
 
     static bool canNotMove(const Scope *scope);
+
+    /**
+     * @brief Helper for checkThisUseAfterFree
+     */
+    bool checkThisUseAfterFreeRecursive(const Scope *classScope, const Function *func, const Variable *selfPointer, std::set<const Function *> callstack, const Token **freeToken);
+
 };
 /// @}
 //---------------------------------------------------------------------------

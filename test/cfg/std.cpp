@@ -519,16 +519,16 @@ void uninitvar_cosh(void)
 
 void uninitvar_feraiseexcept(void)
 {
-    int excepts;
+    int expects;
     // cppcheck-suppress uninitvar
-    (void)std::feraiseexcept(excepts);
+    (void)std::feraiseexcept(expects);
 }
 
 void uninitvar_fesetexceptflag(fexcept_t* flagp)
 {
-    int excepts;
+    int expects;
     // cppcheck-suppress uninitvar
-    (void)std::fesetexceptflag(flagp, excepts);
+    (void)std::fesetexceptflag(flagp, expects);
 }
 
 void uninitvar_feclearexcept(void)
@@ -2040,6 +2040,19 @@ void uninivar_bsearch(void)
     (void)std::bsearch(key,base,num,size,(int(*)(const void*,const void*)) strcmp);
 }
 
+void minsize_bsearch(const void* key, const void* base,
+                     size_t num, size_t size,
+                     int (*compar)(const void*,const void*))
+{
+    int Base [3] = {42, 43, 44};
+
+    (void)std::bsearch(key,Base,2,size,(int(*)(const void*,const void*)) strcmp);
+    (void)std::bsearch(key,Base,3,size,(int(*)(const void*,const void*)) strcmp);
+    (void)std::bsearch(key,Base,4,size,(int(*)(const void*,const void*)) strcmp);
+
+    (void)std::bsearch(key,base,2,size,(int(*)(const void*,const void*)) strcmp);
+}
+
 void uninitvar_qsort(void)
 {
     void *base;
@@ -3210,13 +3223,13 @@ void nullPointer_fegetenv(void)
     (void)std::fegetenv(0);
 }
 
-void nullPointer_fegetexceptflag(int excepts)
+void nullPointer_fegetexceptflag(int expects)
 {
     fexcept_t* flagp = 0;
     // cppcheck-suppress nullPointer
-    (void)std::fegetexceptflag(flagp,excepts);
+    (void)std::fegetexceptflag(flagp,expects);
     // cppcheck-suppress nullPointer
-    (void)std::fegetexceptflag(0,excepts);
+    (void)std::fegetexceptflag(0,expects);
 }
 
 void nullPointer_feholdexcept(void)
@@ -3237,13 +3250,13 @@ void nullPointer_fesetenv(void)
     (void)std::fesetenv(0);
 }
 
-void nullPointer_fesetexceptflag(int excepts)
+void nullPointer_fesetexceptflag(int expects)
 {
     fexcept_t* flagp = 0;
     // cppcheck-suppress nullPointer
-    (void)std::fesetexceptflag(flagp,excepts);
+    (void)std::fesetexceptflag(flagp,expects);
     // cppcheck-suppress nullPointer
-    (void)std::fesetexceptflag(0,excepts);
+    (void)std::fesetexceptflag(0,expects);
 }
 
 void nullPointer_feupdateenv(void)

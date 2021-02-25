@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,6 +20,10 @@
 
 #include "check.h"
 
+#include "errorlogger.h"
+#include "settings.h"
+#include "tokenize.h"
+
 #include <iostream>
 
 //---------------------------------------------------------------------------
@@ -36,22 +40,35 @@ Check::Check(const std::string &aname)
     instances().push_back(this);
 }
 
-void Check::reportError(const ErrorLogger::ErrorMessage &errmsg)
+void Check::reportError(const ErrorMessage &errmsg)
 {
     std::cout << errmsg.toXML() << std::endl;
 }
 
-bool Check::wrongData(const Token *tok, bool condition, const char *str)
+
+void Check::reportError(const std::list<const Token *> &callstack, Severity::SeverityType severity, const std::string &id, const std::string &msg, const CWE &cwe, bool inconclusive)
 {
-#if defined(DACA2) || defined(UNSTABLE)
-    if (condition) {
+    const ErrorMessage errmsg(callstack, mTokenizer ? &mTokenizer->list : nullptr, severity, id, msg, cwe, inconclusive);
+    if (mErrorLogger)
+        mErrorLogger->reportErr(errmsg);
+    else
+        reportError(errmsg);
+}
+
+void Check::reportError(const ErrorPath &errorPath, Severity::SeverityType severity, const char id[], const std::string &msg, const CWE &cwe, bool inconclusive)
+{
+    const ErrorMessage errmsg(errorPath, mTokenizer ? &mTokenizer->list : nullptr, severity, id, msg, cwe, inconclusive);
+    if (mErrorLogger)
+        mErrorLogger->reportErr(errmsg);
+    else
+        reportError(errmsg);
+}
+
+bool Check::wrongData(const Token *tok, const char *str)
+{
+    if (mSettings->daca)
         reportError(tok, Severity::debug, "DacaWrongData", "Wrong data detected by condition " + std::string(str));
-    }
-#else
-    (void)tok;
-    (void)str;
-#endif
-    return condition;
+    return true;
 }
 
 std::list<Check *> &Check::instances()
@@ -74,4 +91,22 @@ std::string Check::getMessageId(const ValueFlow::Value &value, const char id[])
     if (value.safe)
         return std::string("safe") + (char)std::toupper(id[0]) + (id + 1);
     return id;
+}
+
+ErrorPath Check::getErrorPath(const Token* errtok, const ValueFlow::Value* value, const std::string& bug) const
+{
+    ErrorPath errorPath;
+    if (!value) {
+        errorPath.emplace_back(errtok, bug);
+    } else if (mSettings->verbose || mSettings->xml || !mSettings->templateLocation.empty()) {
+        errorPath = value->errorPath;
+        errorPath.emplace_back(errtok, bug);
+    } else {
+        if (value->condition)
+            errorPath.emplace_back(value->condition, "condition '" + value->condition->expressionString() + "'");
+        //else if (!value->isKnown() || value->defaultArg)
+        //    errorPath = value->callstack;
+        errorPath.emplace_back(errtok, bug);
+    }
+    return errorPath;
 }

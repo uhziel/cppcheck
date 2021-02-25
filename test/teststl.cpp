@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -42,6 +42,7 @@ private:
 
         TEST_CASE(outOfBounds);
         TEST_CASE(outOfBoundsIndexExpression);
+        TEST_CASE(outOfBoundsIterator);
 
         TEST_CASE(iterator1);
         TEST_CASE(iterator2);
@@ -65,8 +66,12 @@ private:
         TEST_CASE(iterator20);
         TEST_CASE(iterator21);
         TEST_CASE(iterator22);
+        TEST_CASE(iterator23);
+        TEST_CASE(iterator24);
+        TEST_CASE(iterator25); // #9742
         TEST_CASE(iteratorExpression);
         TEST_CASE(iteratorSameExpression);
+        TEST_CASE(mismatchingContainerIterator);
 
         TEST_CASE(dereference);
         TEST_CASE(dereference_break);  // #3644 - handle "break"
@@ -159,7 +164,11 @@ private:
         TEST_CASE(loopAlgoMinMax);
 
         TEST_CASE(invalidContainer);
+        TEST_CASE(invalidContainerLoop);
         TEST_CASE(findInsert);
+
+        TEST_CASE(checkKnownEmptyContainer);
+        TEST_CASE(checkMutexes);
     }
 
     void check(const char code[], const bool inconclusive=false, const Standards::cppstd_t cppstandard=Standards::CPPLatest) {
@@ -328,6 +337,34 @@ private:
                     "    x[0] = 0;\n"
                     "}\n");
         ASSERT_EQUALS("", errout.str());
+
+        checkNormal("void f(bool b) {\n"
+                    "    std::vector<int> x;\n"
+                    "    if (b)\n"
+                    "        x.push_back(1);\n"
+                    "    if (x.size() < 2)\n"
+                    "        return;\n"
+                    "    x[0] = 2;\n"
+                    "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        checkNormal("void f(bool b) {\n"
+                    "    std::vector<int> v;\n"
+                    "    if(v.at(b?42:0)) {}\n"
+                    "}\n");
+        ASSERT_EQUALS(
+            "test.cpp:3:error:Out of bounds access in expression 'v.at(b?42:0)' because 'v' is empty and 'at' may be non-zero.\n",
+            errout.str());
+
+        checkNormal("void f(std::vector<int> v, bool b){\n"
+                    "    if (v.size() == 1)\n"
+                    "        if(v.at(b?42:0)) {}\n"
+                    "}\n");
+        ASSERT_EQUALS(
+            "test.cpp:3:warning:Either the condition 'v.size()==1' is redundant or v size can be 1. Expression 'v.at' cause access out of bounds.\n"
+            "test.cpp:2:note:condition 'v.size()==1'\n"
+            "test.cpp:3:note:Access out of bounds\n",
+            errout.str());
     }
 
     void outOfBoundsIndexExpression() {
@@ -353,25 +390,71 @@ private:
                     "}");
         ASSERT_EQUALS("test.cpp:2:error:Out of bounds access of s, index 'x*s.size()' is out of bounds.\n", errout.str());
     }
+    void outOfBoundsIterator() {
+        check("int f() {\n"
+              "    std::vector<int> v;\n"
+              "    auto it = v.begin();\n"
+              "    return *it;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4]: (error) Out of bounds access in expression 'it' because 'v' is empty.\n",
+                      errout.str());
+
+        check("int f() {\n"
+              "    std::vector<int> v;\n"
+              "    v.push_back(0);\n"
+              "    auto it = v.begin() + 1;\n"
+              "    return *it;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:5]: (error) Out of bounds access in 'it', if 'v' size is 1 and 'it' is at position 1 from the beginning\n",
+                      errout.str());
+
+        check("int f() {\n"
+              "    std::vector<int> v;\n"
+              "    v.push_back(0);\n"
+              "    auto it = v.end() - 1;\n"
+              "    return *it;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("int f() {\n"
+              "    std::vector<int> v;\n"
+              "    v.push_back(0);\n"
+              "    auto it = v.end() - 2;\n"
+              "    return *it;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:5]: (error) Out of bounds access in 'it', if 'v' size is 1 and 'it' is at position 2 from the end\n",
+                      errout.str());
+
+        check("void g(int);\n"
+              "void f(std::vector<int> x) {\n"
+              "    std::map<int, int> m;\n"
+              "    if (!m.empty()) {\n"
+              "        g(m.begin()->second);\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+    }
 
     void iterator1() {
         check("void f()\n"
               "{\n"
-              "    list<int> l1;\n"
-              "    list<int> l2;\n"
-              "    for (list<int>::iterator it = l1.begin(); it != l2.end(); ++it)\n"
+              "    std::list<int> l1;\n"
+              "    std::list<int> l2;\n"
+              "    for (std::list<int>::iterator it = l1.begin(); it != l2.end(); ++it)\n"
               "    { }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:5] -> [test.cpp:5]: (error) Same iterator is used with different containers 'l1' and 'l2'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers 'l1' and 'l2' are used together.\n",
+                      errout.str());
 
         check("void f()\n"
               "{\n"
-              "    list<int> l1;\n"
-              "    list<int> l2;\n"
-              "    for (list<int>::iterator it = l1.begin(); l2.end() != it; ++it)\n"
+              "    std::list<int> l1;\n"
+              "    std::list<int> l2;\n"
+              "    for (std::list<int>::iterator it = l1.begin(); l2.end() != it; ++it)\n"
               "    { }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:5] -> [test.cpp:5]: (error) Same iterator is used with different containers 'l2' and 'l1'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers 'l2' and 'l1' are used together.\n",
+                      errout.str());
 
         check("struct C { std::list<int> l1; void func(); };\n"
               "void C::func() {\n"
@@ -385,79 +468,82 @@ private:
         // Same check with reverse iterator
         check("void f()\n"
               "{\n"
-              "    list<int> l1;\n"
-              "    list<int> l2;\n"
-              "    for (list<int>::const_reverse_iterator it = l1.rbegin(); it != l2.rend(); ++it)\n"
+              "    std::list<int> l1;\n"
+              "    std::list<int> l2;\n"
+              "    for (std::list<int>::const_reverse_iterator it = l1.rbegin(); it != l2.rend(); ++it)\n"
               "    { }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:5] -> [test.cpp:5]: (error) Same iterator is used with different containers 'l1' and 'l2'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers 'l1' and 'l2' are used together.\n",
+                      errout.str());
     }
 
     void iterator2() {
         check("void foo()\n"
               "{\n"
-              "    list<int> l1;\n"
-              "    list<int> l2;\n"
-              "    list<int>::iterator it = l1.begin();\n"
+              "    std::list<int> l1;\n"
+              "    std::list<int> l2;\n"
+              "    std::list<int>::iterator it = l1.begin();\n"
               "    while (it != l2.end())\n"
               "    {\n"
               "        ++it;\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:6] -> [test.cpp:5]: (error) Same iterator is used with different containers 'l1' and 'l2'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers 'l1' and 'l2' are used together.\n",
+                      errout.str());
 
         check("void foo()\n"
               "{\n"
-              "    list<int> l1;\n"
-              "    list<int> l2;\n"
-              "    list<int>::iterator it = l1.begin();\n"
+              "    std::list<int> l1;\n"
+              "    std::list<int> l2;\n"
+              "    std::list<int>::iterator it = l1.begin();\n"
               "    while (l2.end() != it)\n"
               "    {\n"
               "        ++it;\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:6] -> [test.cpp:5]: (error) Same iterator is used with different containers 'l2' and 'l1'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:6]: (error) Iterators of different containers 'l2' and 'l1' are used together.\n",
+                      errout.str());
     }
 
     void iterator3() {
         check("void foo()\n"
               "{\n"
-              "    list<int> l1;\n"
-              "    list<int> l2;\n"
-              "    list<int>::iterator it = l1.begin();\n"
+              "    std::list<int> l1;\n"
+              "    std::list<int> l2;\n"
+              "    std::list<int>::iterator it = l1.begin();\n"
               "    l2.insert(it, 0);\n"
               "}");
         ASSERT_EQUALS("[test.cpp:6]: (error) Same iterator is used with different containers 'l1' and 'l2'.\n", errout.str());
 
         check("void foo() {\n" // #5803
-              "    list<int> l1;\n"
-              "    list<int> l2;\n"
-              "    list<int>::iterator it = l1.begin();\n"
+              "    std::list<int> l1;\n"
+              "    std::list<int> l2;\n"
+              "    std::list<int>::iterator it = l1.begin();\n"
               "    l2.insert(it, l1.end());\n"
               "}");
         ASSERT_EQUALS("", errout.str());
 
         check("void foo() {\n" // #7658
-              "    list<int> l1;\n"
-              "    list<int> l2;\n"
-              "    list<int>::iterator it = l1.begin();\n"
-              "    list<int>::iterator end = l1.end();\n"
+              "    std::list<int> l1;\n"
+              "    std::list<int> l2;\n"
+              "    std::list<int>::iterator it = l1.begin();\n"
+              "    std::list<int>::iterator end = l1.end();\n"
               "    l2.insert(it, end);\n"
               "}");
         ASSERT_EQUALS("", errout.str());
 
         // only warn for insert when there are preciself 2 arguments.
         check("void foo() {\n"
-              "    list<int> l1;\n"
-              "    list<int> l2;\n"
-              "    list<int>::iterator it = l1.begin();\n"
+              "    std::list<int> l1;\n"
+              "    std::list<int> l2;\n"
+              "    std::list<int>::iterator it = l1.begin();\n"
               "    l2.insert(it);\n"
               "}");
         ASSERT_EQUALS("", errout.str());
         check("void foo() {\n"
-              "    list<int> l1;\n"
-              "    list<int> l2;\n"
-              "    list<int>::iterator it = l1.begin();\n"
+              "    std::list<int> l1;\n"
+              "    std::list<int> l2;\n"
+              "    std::list<int>::iterator it = l1.begin();\n"
               "    l2.insert(it,0,1);\n"
               "}");
         ASSERT_EQUALS("", errout.str());
@@ -479,13 +565,12 @@ private:
     }
 
     void iterator5() {
-        check("void foo()\n"
+        check("void foo(std::vector<int> ints1, std::vector<int> ints2)\n"
               "{\n"
-              "    std::vector<int> ints1;\n"
-              "    std::vector<int> ints2;\n"
               "    std::vector<int>::iterator it = std::find(ints1.begin(), ints2.end(), 22);\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers are used together.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:3]: (error) Iterators of different containers 'ints1' and 'ints2' are used together.\n",
+                      errout.str());
     }
 
     void iterator6() {
@@ -510,52 +595,44 @@ private:
     }
 
     void iterator7() {
-        check("void foo()\n"
+        check("void foo(std::vector<int> ints1, std::vector<int> ints2)\n"
               "{\n"
-              "    std::vector<int> ints1;\n"
-              "    std::vector<int> ints2;\n"
               "    std::vector<int>::iterator it = std::inplace_merge(ints1.begin(), std::advance(ints1.rbegin(), 5), ints2.end());\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers are used together.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:3]: (error) Iterators of different containers 'ints1' and 'ints2' are used together.\n",
+                      errout.str());
 
-        check("void foo()\n"
+        check("void foo(std::vector<int> ints1, std::vector<int> ints2)\n"
               "{\n"
-              "    std::vector<int> ints1;\n"
-              "    std::vector<int> ints2;\n"
               "    std::vector<int>::iterator it = std::inplace_merge(ints1.begin(), std::advance(ints2.rbegin(), 5), ints1.end());\n"
               "}");
         ASSERT_EQUALS("", errout.str());
     }
 
     void iterator8() {
-        check("void foo()\n"
+        check("void foo(std::vector<int> ints1, std::vector<int> ints2)\n"
               "{\n"
-              "    std::vector<int> ints1;\n"
-              "    std::vector<int> ints2;\n"
               "    std::vector<int>::iterator it = std::find_first_of(ints1.begin(), ints2.end(), ints1.begin(), ints1.end());\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers are used together.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:3]: (error) Iterators of different containers 'ints1' and 'ints2' are used together.\n",
+                      errout.str());
 
-        check("void foo()\n"
+        check("void foo(std::vector<int> ints1, std::vector<int> ints2)\n"
               "{\n"
-              "    std::vector<int> ints1;\n"
-              "    std::vector<int> ints2;\n"
               "    std::vector<int>::iterator it = std::find_first_of(ints1.begin(), ints1.end(), ints2.begin(), ints1.end());\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers are used together.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:3]: (error) Iterators of different containers 'ints2' and 'ints1' are used together.\n",
+                      errout.str());
 
-        check("void foo()\n"
+        check("void foo(std::vector<int> ints1, std::vector<int> ints2)\n"
               "{\n"
-              "    std::vector<int> ints1;\n"
-              "    std::vector<int> ints2;\n"
               "    std::vector<int>::iterator it = std::find_first_of(foo.bar.begin(), foo.bar.end()-6, ints2.begin(), ints1.end());\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers are used together.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:3]: (error) Iterators of different containers 'ints2' and 'ints1' are used together.\n",
+                      errout.str());
 
-        check("void foo()\n"
+        check("void foo(std::vector<int> ints1, std::vector<int> ints2)\n"
               "{\n"
-              "    std::vector<int> ints1;\n"
-              "    std::vector<int> ints2;\n"
               "    std::vector<int>::iterator it = std::find_first_of(ints1.begin(), ints1.end(), ints2.begin(), ints2.end());\n"
               "}");
         ASSERT_EQUALS("", errout.str());
@@ -569,10 +646,11 @@ private:
               "    const std::string fp1 = std::string(a.begin(), a.end());\n"
               "    const std::string tp2(a.begin(), a.end());\n"
               "}");
-        ASSERT_EQUALS(// TODO "[test.cpp:2]: (error) Iterators of different containers are used together.\n"
+        ASSERT_EQUALS( // TODO "[test.cpp:2]: (error) Iterators of different containers are used together.\n"
             // TODO "[test.cpp:3]: (error) Iterators of different containers are used together.\n"
-            "[test.cpp:4]: (error) Iterators of different containers are used together.\n"
-            "[test.cpp:5]: (error) Iterators of different containers are used together.\n", errout.str());
+            "[test.cpp:4]: (error) Iterators of different containers 'tp3' and 'a' are used together.\n"
+            "[test.cpp:5]: (error) Iterators of different containers 'tp4' and 'b' are used together.\n",
+            errout.str());
     }
 
     void iterator9() {
@@ -640,7 +718,8 @@ private:
               "        if (it != s2.end()) continue;\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:8] -> [test.cpp:5]: (error) Same iterator is used with different containers 's1' and 's2'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers 's1' and 's2' are used together.\n",
+                      errout.str());
     }
 
     void iterator11() {
@@ -662,7 +741,8 @@ private:
               "    std::map<int, int>::const_iterator it = map1.find(123);\n"
               "    if (it == map2.end()) { }"
               "}");
-        ASSERT_EQUALS("[test.cpp:5] -> [test.cpp:4]: (error) Same iterator is used with different containers 'map1' and 'map2'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:4]: (error) Iterators of different containers 'map1' and 'map2' are used together.\n",
+                      errout.str());
 
         check("void f() {\n"
               "    std::map<int, int> map1;\n"
@@ -670,7 +750,8 @@ private:
               "    std::map<int, int>::const_iterator it = map1.find(123);\n"
               "    if (map2.end() == it) { }"
               "}");
-        ASSERT_EQUALS("[test.cpp:5] -> [test.cpp:4]: (error) Same iterator is used with different containers 'map2' and 'map1'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers 'map2' and 'map1' are used together.\n",
+                      errout.str());
 
         check("void f(std::string &s) {\n"
               "    int pos = s.find(x);\n"
@@ -692,7 +773,8 @@ private:
               "    while (it!=a.end())\n"
               "        ++it;\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:9] -> [test.cpp:8]: (error) Same iterator is used with different containers 't' and 'a'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:8]: (error) Iterators of different containers 't' and 'a' are used together.\n",
+                      errout.str());
 
         // #4062
         check("void f() {\n"
@@ -753,7 +835,8 @@ private:
               "        ++it1;\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:7] -> [test.cpp:5] -> [test.cpp:6]: (error) Comparison of iterators from containers 'l1' and 'l2'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers 'l1' and 'l2' are used together.\n",
+                      errout.str());
 
         check("void foo()\n"
               "{\n"
@@ -766,7 +849,8 @@ private:
               "        ++it2;\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:7] -> [test.cpp:6] -> [test.cpp:5]: (error) Comparison of iterators from containers 'l2' and 'l1'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:6]: (error) Iterators of different containers 'l2' and 'l1' are used together.\n",
+                      errout.str());
 
         check("void foo()\n"
               "{\n"
@@ -779,21 +863,22 @@ private:
               "        ++it1;\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:7] -> [test.cpp:6] -> [test.cpp:5]: (error) Comparison of iterators from containers 'l1' and 'l2'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:6]: (error) Iterators of different containers 'l1' and 'l2' are used together.\n",
+                      errout.str());
 
         check("void foo()\n"
               "{\n"
-              "    std::list<int> l1;\n"
-              "    std::list<int> l2(10, 4);\n"
-              "    std::list<int>::iterator it1 = l1.begin();\n"
-              "    std::list<int>::iterator it2 = l2.find(4);\n"
+              "    std::set<int> l1;\n"
+              "    std::set<int> l2(10, 4);\n"
+              "    std::set<int>::iterator it1 = l1.begin();\n"
+              "    std::set<int>::iterator it2 = l2.find(4);\n"
               "    while (it1 != it2)\n"
               "    {\n"
               "        ++it1;\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:7] -> [test.cpp:6] -> [test.cpp:5]: (error) Comparison of iterators from containers 'l1' and 'l2'.\n", errout.str());
-
+        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers 'l1' and 'l2' are used together.\n",
+                      errout.str());
     }
 
     void iterator17() {
@@ -809,7 +894,8 @@ private:
               "        ++it1;\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:8] -> [test.cpp:5] -> [test.cpp:7]: (error) Comparison of iterators from containers 'l1' and 'l2'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers 'l1' and 'l2' are used together.\n",
+                      errout.str());
 
         check("void foo()\n"
               "{\n"
@@ -854,7 +940,8 @@ private:
               "        ++it1;\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:10] -> [test.cpp:5] -> [test.cpp:9]: (error) Comparison of iterators from containers 'l1' and 'l2'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers 'l1' and 'l2' are used together.\n",
+                      errout.str());
     }
 
     void iterator18() {
@@ -920,9 +1007,10 @@ private:
               "        }\n"
               "    }\n"
               "}");
-        TODO_ASSERT_EQUALS("[test.cpp:7] -> [test.cpp:4]: (error) Same iterator is used with containers 'l1' that are defined in different scopes.\n",
-                           "[test.cpp:7] -> [test.cpp:4]: (error) Same iterator is used with containers 'l1' that are defined in different scopes.\n[test.cpp:7]: (error) Dangerous comparison using operator< on iterator.\n",
-                           errout.str());
+        TODO_ASSERT_EQUALS(
+            "[test.cpp:7] -> [test.cpp:4]: (error) Same iterator is used with containers 'l1' that are defined in different scopes.\n",
+            "[test.cpp:7] -> [test.cpp:7]: (error) Same iterator is used with containers 'l1' that are defined in different scopes.\n[test.cpp:7]: (error) Dangerous comparison using operator< on iterator.\n",
+            errout.str());
 
         check("void foo()\n"
               "{\n"
@@ -936,7 +1024,9 @@ private:
               "        }\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:8] -> [test.cpp:4] -> [test.cpp:7]: (error) Comparison of iterators from containers 'l1' that are defined in different scopes.\n", errout.str());
+        ASSERT_EQUALS(
+            "[test.cpp:8] -> [test.cpp:4]: (error) Same iterator is used with containers 'l1' that are defined in different scopes.\n",
+            errout.str());
 
         check("void foo()\n"
               "{\n"
@@ -950,8 +1040,9 @@ private:
               "        }\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:8] -> [test.cpp:4] -> [test.cpp:7]: (error) Comparison of iterators from containers 'l1' that are defined in different scopes.\n", errout.str());
-
+        ASSERT_EQUALS(
+            "[test.cpp:8] -> [test.cpp:7]: (error) Same iterator is used with containers 'l1' that are defined in different scopes.\n",
+            errout.str());
     }
 
     void iterator20() {
@@ -967,7 +1058,8 @@ private:
               "        ++it1;\n"
               "    }\n"
               "}");
-        TODO_ASSERT_EQUALS("[test.cpp:8] -> [test.cpp:7]: (error) Same iterator is used with different containers 'l2' and 'l1'.\n", "", errout.str());
+        ASSERT_EQUALS("[test.cpp:6]: (error) Iterators of different containers 'l2' and 'l1' are used together.\n",
+                      errout.str());
 
         check("std::list<int> l3;\n"
               "std::list<int>::iterator bar()\n"
@@ -1004,8 +1096,9 @@ private:
               "    {\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:7] -> [test.cpp:6] -> [test.cpp:5]: (error) Comparison of iterators from containers 'l1' and 'l2'.\n"
-                      "[test.cpp:10] -> [test.cpp:6] -> [test.cpp:5]: (error) Comparison of iterators from containers 'l2' and 'l1'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers 'l1' and 'l2' are used together.\n"
+                      "[test.cpp:6]: (error) Iterators of different containers 'l2' and 'l1' are used together.\n",
+                      errout.str());
 
         check("void foo()\n"
               "{\n"
@@ -1017,7 +1110,8 @@ private:
               "    {\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:7] -> [test.cpp:6] -> [test.cpp:5]: (error) Comparison of iterators from containers 'l1' and 'l2'.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:5]: (error) Iterators of different containers 'l1' and 'l2' are used together.\n",
+                      errout.str());
     }
 
     void iterator22() { // #7107
@@ -1026,6 +1120,64 @@ private:
               "    std::list<int>::iterator it = l.find(123);\n"
               "    x.l.erase(it);\n"
               "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void iterator23() { // #9550
+        check("struct A {\n"
+              "    struct B {\n"
+              "        bool operator==(const A::B& b) const;\n"
+              "        int x;\n"
+              "        int y;\n"
+              "        int z;\n"
+              "    };\n"
+              "};\n"
+              "bool A::B::operator==(const A::B& b) const {\n"
+              "    return std::tie(x, y, z) == std::tie(b.x, b.y, b.z);\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void iterator24() {
+        // #9556
+        check("void f(int a, int b) {\n"
+              "  if (&a == &b) {}\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f(int a, int b) {\n"
+              "  if (std::for_each(&a, &b + 1, [](auto) {})) {}\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:2]: (error) Iterators of different containers 'a' and 'b' are used together.\n",
+                      errout.str());
+
+        check("void f(int a, int b) {\n"
+              "  if (std::for_each(&a, &b, [](auto) {})) {}\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:2]: (error) Iterators of different containers 'a' and 'b' are used together.\n",
+                      errout.str());
+
+        check("void f(int a) {\n"
+              "  if (std::for_each(&a, &a, [](auto) {})) {}\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:2]: (style) Same iterators expression are used for algorithm.\n", errout.str());
+
+        check("void f(int a) {\n"
+              "  if (std::for_each(&a, &a + 1, [](auto) {})) {}\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void iterator25() {
+        // #9742
+        check("struct S {\n"
+              "  std::vector<int>& v;\n"
+              "};\n"
+              "struct T {\n"
+              "    bool operator()(const S& lhs, const S& rhs) const {\n"
+              "        return &lhs.v != &rhs.v;\n"
+              "    }\n"
+              "};\n");
         ASSERT_EQUALS("", errout.str());
     }
 
@@ -1140,9 +1292,7 @@ private:
               "}\n");
         ASSERT_EQUALS("", errout.str());
 
-        check("void f() {\n"
-              "  std::list<int*> a;\n"
-              "  std::list<int*> b;\n"
+        check("void f(std::list<int*> a, std::list<int*> b) {\n"
               "  if (*a.begin() == *b.begin()) {}\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
@@ -1186,6 +1336,35 @@ private:
               "    std::for_each(it, it, [](int){});\n"
               "}\n");
         ASSERT_EQUALS("[test.cpp:2]: (style) Same iterators expression are used for algorithm.\n", errout.str());
+    }
+
+    void mismatchingContainerIterator() {
+        check("std::vector<int> to_vector(int value) {\n"
+              "    std::vector<int> a, b;\n"
+              "    a.insert(b.end(), value);\n"
+              "    return a;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3]: (error) Iterator 'b.end()' from different container 'a' are used together.\n", errout.str());
+
+        check("std::vector<int> f(std::vector<int> a, std::vector<int> b) {\n"
+              "    a.erase(b.begin());\n"
+              "    return a;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:2]: (error) Iterator 'b.begin()' from different container 'a' are used together.\n", errout.str());
+
+        // #9973
+        check("void f() {\n"
+              "    std::list<int> l1;\n"
+              "    std::list<int> l2;\n"
+              "    std::list<int>& l = l2;\n"
+              "    for (auto it = l.begin(); it != l.end(); ++it) {\n"
+              "        if (*it == 1) {\n"
+              "            l.erase(it);\n"
+              "            break;\n"
+              "        }\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
     }
 
     // Dereferencing invalid pointer
@@ -1296,7 +1475,8 @@ private:
               "       foo[ii] = 0;\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:6]: (error) When ii==foo.size(), foo[ii] is out of bounds.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:6]: (error) Out of bounds access in expression 'foo[ii]' because 'foo' is empty.\n"
+                      "[test.cpp:6]: (error) When ii==foo.size(), foo[ii] is out of bounds.\n", errout.str());
 
         check("void foo(std::vector<int> foo) {\n"
               "    for (unsigned int ii = 0; ii <= foo.size(); ++ii) {\n"
@@ -1351,6 +1531,13 @@ private:
               "    for (B b : D()) {}\n" // Don't crash on range-based for-loop
               "}");
         ASSERT_EQUALS("", errout.str());
+
+        check("void foo(std::vector<int> foo) {\n"
+              "    for (unsigned int ii = 0; ii <= foo.size() + 1; ++ii) {\n"
+              "       foo.at(ii) = 0;\n"
+              "    }\n"
+              "}");
+        TODO_ASSERT_EQUALS("[test.cpp:3]: (error) When ii==foo.size(), foo.at(ii) is out of bounds.\n", "", errout.str());
     }
 
     void STLSizeNoErr() {
@@ -1392,7 +1579,7 @@ private:
                   "        }\n"
                   "    }\n"
                   "}");
-            ASSERT_EQUALS("", errout.str());
+            ASSERT_EQUALS("[test.cpp:11]: (error) Out of bounds access in expression 'foo[ii]' because 'foo' is empty.\n", errout.str());
         }
 
         {
@@ -1400,6 +1587,15 @@ private:
                   "    int i = x;"
                   "    for (int i = 5; i <= data.size(); i++)\n"
                   "        data[i] = 0;\n"
+                  "}");
+            ASSERT_EQUALS("", errout.str());
+        }
+
+        {
+            check("void foo(std::vector<int> foo) {\n"
+                  "    for (unsigned int ii = 0; ii <= foo.size() - 1; ++ii) {\n"
+                  "       foo.at(ii) = 0;\n"
+                  "    }\n"
                   "}");
             ASSERT_EQUALS("", errout.str());
         }
@@ -1453,9 +1649,9 @@ private:
         ASSERT_EQUALS("", errout.str());
 
         // #2101
-        check("void f(vector< list<int> > &ints, unsigned int i)\n"
+        check("void f(vector< std::list<int> > &ints, unsigned int i)\n"
               "{\n"
-              "    list<int>::iterator it;\n"
+              "    std::list<int>::iterator it;\n"
               "    for(it = ints[i].begin(); it != ints[i].end(); it++) {\n"
               "        if (*it % 2)\n"
               "            it = ints[i].erase(it);\n"
@@ -1717,11 +1913,11 @@ private:
     }
 
     void eraseAssign2() {
-        check("void f(list<int> &ints)\n"
+        check("void f(std::list<int> &ints)\n"
               "{\n"
-              "    for (list<int>::iterator it = ints.begin(); it != ints.end();) {\n"
+              "    for (std::list<int>::iterator it = ints.begin(); it != ints.end();) {\n"
               "        if (*it == 123) {\n"
-              "            list<int>::iterator copy = it;\n"
+              "            std::list<int>::iterator copy = it;\n"
               "            ++copy;\n"
               "            ints.erase(it);\n"
               "            it = copy;\n"
@@ -1797,9 +1993,8 @@ private:
               "}");
         ASSERT_EQUALS("[test.cpp:4] -> [test.cpp:3]: (error) Iterator 'it' used after element has been erased.\n", errout.str());
 
-        check("void f()\n"
+        check("void f(std::set<int> foo)\n"
               "{\n"
-              "    std::set<int> foo;\n"
               "    std::set<int>::iterator it = foo.begin();\n"
               "    foo.erase(*it);\n"
               "}");
@@ -2062,7 +2257,9 @@ private:
               "        *it;\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:4] -> [test.cpp:4] -> [test.cpp:6] -> [test.cpp:3] -> [test.cpp:4]: (error) Using iterator to local container 'vec' that may be invalid.\n", errout.str());
+        ASSERT_EQUALS(
+            "[test.cpp:4] -> [test.cpp:6] -> [test.cpp:3] -> [test.cpp:9]: (error, inconclusive) Using iterator to local container 'vec' that may be invalid.\n",
+            errout.str());
     }
 
     void pushback13() {
@@ -2123,14 +2320,16 @@ private:
               "}");
         ASSERT_EQUALS("", errout.str());
 
+        // TODO: This shouldn't be inconclusive
         check("void f(const std::vector<Bar>& bars) {\n"
               "    for(std::vector<Bar>::iterator i = bars.begin(); i != bars.end(); ++i) {\n"
               "        bars.insert(i, bar);\n"
               "        i = bars.insert(i, bar);\n"
               "    }\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:2] -> [test.cpp:2] -> [test.cpp:3] -> [test.cpp:1] -> [test.cpp:2]: (error) Using iterator to local container 'bars' that may be invalid.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:2] -> [test.cpp:3] -> [test.cpp:1] -> [test.cpp:4]: (error, inconclusive) Using iterator to local container 'bars' that may be invalid.\n", errout.str());
 
+        // TODO: This shouldn't be inconclusive
         check("void* f(const std::vector<Bar>& bars) {\n"
               "    std::vector<Bar>::iterator i = bars.begin();\n"
               "    bars.insert(i, Bar());\n"
@@ -2138,7 +2337,7 @@ private:
               "    void* v = &i->foo;\n"
               "    return v;\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:4] -> [test.cpp:1] -> [test.cpp:5] -> [test.cpp:4] -> [test.cpp:1] -> [test.cpp:6]: (error) Using pointer to local variable 'bars' that may be invalid.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:1] -> [test.cpp:2] -> [test.cpp:3] -> [test.cpp:1] -> [test.cpp:4]: (error, inconclusive) Using iterator to local container 'bars' that may be invalid.\n", errout.str());
     }
 
     void insert2() {
@@ -2402,6 +2601,10 @@ private:
               "}");
         ASSERT_EQUALS("", errout.str());
 
+        check("void f(std::set<int> s) {\n"
+              "    if (auto result = s.find(123); result != s.end()) {}\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
 
         // ---------------------------
         // std::find
@@ -3212,8 +3415,7 @@ private:
               "}");
         ASSERT_EQUALS("", errout.str());
 
-        check("void f() {\n"
-              "    std::vector<int> a;\n"
+        check("void f(std::vector<int> a) {\n"
               "    std::remove(a.begin(), a.end(), val);\n"
               "    std::remove_if(a.begin(), a.end(), val);\n"
               "    std::unique(a.begin(), a.end(), val);\n"
@@ -3221,9 +3423,9 @@ private:
               "    a.erase(std::remove(a.begin(), a.end(), val));\n"
               "    std::remove(\"foo.txt\");\n"
               "}");
-        ASSERT_EQUALS("[test.cpp:3]: (warning) Return value of std::remove() ignored. Elements remain in container.\n"
-                      "[test.cpp:4]: (warning) Return value of std::remove_if() ignored. Elements remain in container.\n"
-                      "[test.cpp:5]: (warning) Return value of std::unique() ignored. Elements remain in container.\n", errout.str());
+        ASSERT_EQUALS("[test.cpp:2]: (warning) Return value of std::remove() ignored. Elements remain in container.\n"
+                      "[test.cpp:3]: (warning) Return value of std::remove_if() ignored. Elements remain in container.\n"
+                      "[test.cpp:4]: (warning) Return value of std::unique() ignored. Elements remain in container.\n", errout.str());
 
         // #4431 - fp
         check("bool f() {\n"
@@ -3370,6 +3572,142 @@ private:
         check("void foo(std::string::iterator& i) {\n"
               "    if ((i == str.end() || *i) || (isFoo() && i != str.end())) {\n"
               "        std::cout << \"foo\";\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f() {\n"
+              "    std::vector <int> v;\n"
+              "    std::vector <int>::iterator i = v.end();\n"
+              "    *i=0;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:4]: (error) Dereference of an invalid iterator: i\n", errout.str());
+
+        check("void f(std::vector <int> v) {\n"
+              "    std::vector <int>::iterator i = v.end();\n"
+              "    *i=0;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3]: (error) Dereference of an invalid iterator: i\n", errout.str());
+
+        check("void f(std::vector <int> v) {\n"
+              "    std::vector <int>::iterator i = v.end();\n"
+              "    *(i+1)=0;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3]: (error) Dereference of an invalid iterator: i+1\n", errout.str());
+
+        check("void f(std::vector <int> v) {\n"
+              "    std::vector <int>::iterator i = v.end();\n"
+              "    *(i-1)=0;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f(std::vector <int> v) {\n"
+              "    std::vector <int>::iterator i = v.begin();\n"
+              "    *(i-1)=0;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3]: (error) Dereference of an invalid iterator: i-1\n", errout.str());
+
+        check("void f(std::vector <int> v, bool b) {\n"
+              "    std::vector <int>::iterator i = v.begin();\n"
+              "    if (b)\n"
+              "        i = v.end();\n"
+              "    *i=0;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:5]: (warning) Possible dereference of an invalid iterator: i\n", errout.str());
+
+        check("void f(std::vector <int> v, bool b) {\n"
+              "    std::vector <int>::iterator i = v.begin();\n"
+              "    if (b)\n"
+              "        i = v.end();\n"
+              "    *(i+1)=0;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:5]: (warning) Possible dereference of an invalid iterator: i+1\n", errout.str());
+
+        check("void f(std::vector <int> v, bool b) {\n"
+              "    std::vector <int>::iterator i = v.begin();\n"
+              "    if (b)\n"
+              "        i = v.end();\n"
+              "    *(i-1)=0;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:5]: (warning) Possible dereference of an invalid iterator: i-1\n", errout.str());
+
+        check("int f(std::vector<int> v, int pos) {\n"
+              "    if (pos >= 0)\n"
+              "        return *(v.begin() + pos);\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("int f(std::vector<int> v, int i) {\n"
+              "    auto it = std::find(v.begin(), v.end(), i);\n"
+              "    if (it != v.end()) {}\n"
+              "    return *it;\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:4]: (warning) Either the condition 'it!=v.end()' is redundant or there is possible dereference of an invalid iterator: it.\n", errout.str());
+
+        check("void f(std::vector<int> & v) {\n"
+              "    std::vector<int>::iterator i= v.begin();\n"
+              "    if(i == v.end() && *(i+1) == *i) {}\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:3]: (warning) Either the condition 'i==v.end()' is redundant or there is possible dereference of an invalid iterator: i+1.\n"
+                      "[test.cpp:3] -> [test.cpp:3]: (warning) Either the condition 'i==v.end()' is redundant or there is possible dereference of an invalid iterator: i.\n", errout.str());
+
+
+        check("void f(std::vector<int> & v) {\n"
+              "    std::vector<int>::iterator i= v.begin();\n"
+              "    if(i == v.end() && *i == *(i+1)) {}\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:3]: (warning) Either the condition 'i==v.end()' is redundant or there is possible dereference of an invalid iterator: i.\n"
+                      "[test.cpp:3] -> [test.cpp:3]: (warning) Either the condition 'i==v.end()' is redundant or there is possible dereference of an invalid iterator: i+1.\n", errout.str());
+
+        check("void f(std::vector<int> & v) {\n"
+              "    std::vector<int>::iterator i= v.begin();\n"
+              "    if(i != v.end() && *i == *(i+1)) {}\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:3]: (warning) Either the condition 'i!=v.end()' is redundant or there is possible dereference of an invalid iterator: i+1.\n", errout.str());
+
+        check("void f(std::vector<int> & v) {\n"
+              "    std::vector<int>::iterator i= v.begin();\n"
+              "    if(i != v.end()) {\n"
+              "        if (*(i+1) == *i) {}\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:4]: (warning) Either the condition 'i!=v.end()' is redundant or there is possible dereference of an invalid iterator: i+1.\n", errout.str());
+
+        check("void f(std::vector<int> & v) {\n"
+              "    std::vector<int>::iterator i= v.begin();\n"
+              "    if(i == v.end()) { return; }\n"
+              "    if (*(i+1) == *i) {}\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:4]: (warning) Either the condition 'i==v.end()' is redundant or there is possible dereference of an invalid iterator: i+1.\n", errout.str());
+
+        check("void f(std::vector<int> & v) {\n"
+              "    std::vector<int>::iterator i= v.begin();\n"
+              "    if(i != v.end() && (i+1) != v.end() && *(i+1) == *i) {}\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f(std::string s) {\n"
+              "    for (std::string::const_iterator i = s.begin(); i != s.end(); ++i) {\n"
+              "        if (i != s.end() && (i + 1) != s.end() && *(i + 1) == *i) {\n"
+              "            if (!isalpha(*(i + 2))) {\n"
+              "                std::string modifier;\n"
+              "                modifier += *i;\n"
+              "                modifier += *(i + 1);\n"
+              "            }\n"
+              "        }\n"
+              "    }\n"
+              "}\n");
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:4]: (warning) Either the condition '(i+1)!=s.end()' is redundant or there is possible dereference of an invalid iterator: i+2.\n", errout.str());
+
+        check("void f(std::string s) {\n"
+              "    for (std::string::const_iterator i = s.begin(); i != s.end(); ++i) {\n"
+              "        if (i != s.end() && (i + 1) != s.end() && *(i + 1) == *i) {\n"
+              "            if ((i + 2) != s.end() && !isalpha(*(i + 2))) {\n"
+              "                std::string modifier;\n"
+              "                modifier += *i;\n"
+              "                modifier += *(i + 1);\n"
+              "            }\n"
+              "        }\n"
               "    }\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
@@ -4005,6 +4343,112 @@ private:
               "    z += y;\n"
               "}\n",true);
         ASSERT_EQUALS("", errout.str());
+
+        check("void f(std::vector<char> v)\n"
+              "{\n"
+              "    auto *cur = v.data();\n"
+              "    auto *end = cur + v.size();\n"
+              "    while (cur < end) {\n"
+              "        v.erase(v.begin(), FindNext(v));\n"
+              "        cur = v.data();\n"
+              "        end = cur + v.size();\n"
+              "    }\n"
+              "}\n",true);
+        ASSERT_EQUALS("", errout.str());
+
+        // #9598
+        check("void f(std::vector<std::string> v) {\n"
+              "    for (auto it = v.begin(); it != v.end(); it = v.erase(it))\n"
+              "        *it;\n"
+              "}\n",true);
+        ASSERT_EQUALS("", errout.str());
+
+        // #9714
+        check("void f() {\n"
+              "  auto v = std::vector<std::string>();\n"
+              "  std::string x;\n"
+              "  v.push_back(x.insert(0, \"x\"));\n"
+              "  v.push_back(\"y\");\n"
+              "}\n",true);
+        ASSERT_EQUALS("", errout.str());
+
+        // #9783
+        check("std::string GetTaskIDPerUUID(int);\n"
+              "void InitializeJumpList(CString s);\n"
+              "void foo() {\n"
+              "    CString sAppID = GetTaskIDPerUUID(123).c_str();\n"
+              "    InitializeJumpList(sAppID);\n"
+              "}\n",true);
+        ASSERT_EQUALS("", errout.str());
+        // #9796
+        check("struct A {};\n"
+              "void f() {\n"
+              "    std::vector<A *> v;\n"
+              "    A *a = new A();\n"
+              "    v.push_back(a);\n"
+              "    A *b = v.back();\n"
+              "    v.pop_back();\n"
+              "    delete b;\n"
+              "}\n",true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("struct A {};\n"
+              "void f() {\n"
+              "    std::vector<A *, std::allocator<A*>> v;\n"
+              "    A *a = new A();\n"
+              "    v.push_back(a);\n"
+              "    A *b = v.back();\n"
+              "    v.pop_back();\n"
+              "    delete b;\n"
+              "}\n",true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("struct A {};\n"
+              "void f() {\n"
+              "    std::vector<std::shared_ptr<A>> v;\n"
+              "    std::shared_ptr<A> a = std::make_shared<A>();\n"
+              "    v.push_back(a);\n"
+              "    std::shared_ptr<A> b = v.back();\n"
+              "    v.pop_back();\n"
+              "    delete b;\n"
+              "}\n",true);
+        ASSERT_EQUALS("", errout.str());
+
+        // #9780
+        check("int f() {\n"
+              "    std::vector<int> vect;\n"
+              "    MyStruct info{};\n"
+              "    info.vect = &vect;\n"
+              "    vect.push_back(1);\n"
+              "    return info.ret;\n"
+              "}\n",true);
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void invalidContainerLoop() {
+        // #9435
+        check("void f(std::vector<int> v) {\n"
+              "    for (auto i : v) {\n"
+              "        if (i < 5)\n"
+              "            v.push_back(i * 2);\n"
+              "    }\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:2] -> [test.cpp:4]: (error) Calling 'push_back' while iterating the container is invalid.\n", errout.str());
+
+        // #9713
+        check("void f() {\n"
+              "  std::vector<int> v{1, 2, 3};\n"
+              "  for (int i : v) {\n"
+              "    if (i == 2) {\n"
+              "      v.clear();\n"
+              "      return;\n"
+              "    }\n"
+              "  }\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:4]: (style) Consider using std::any_of algorithm instead of a raw loop.\n", errout.str());
+
     }
 
     void findInsert() {
@@ -4224,6 +4668,248 @@ private:
               "    } else {\n"
               "        m[x] = 1;\n"
               "    }\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void checkKnownEmptyContainer() {
+        check("void f() {\n"
+              "    std::vector<int> v;\n"
+              "    for(auto x:v) {}\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:3]: (style) Iterating over container 'v' that is always empty.\n", errout.str());
+
+        check("void f(std::vector<int> v) {\n"
+              "    v.clear();\n"
+              "    for(auto x:v) {}\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:3]: (style) Iterating over container 'v' that is always empty.\n", errout.str());
+
+        check("void f(std::vector<int> v) {\n"
+              "    if (!v.empty()) { return; }\n"
+              "    for(auto x:v) {}\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:3]: (style) Iterating over container 'v' that is always empty.\n", errout.str());
+
+        check("void f(std::vector<int> v) {\n"
+              "    if (v.empty()) { return; }\n"
+              "    for(auto x:v) {}\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f() {\n"
+              "    std::vector<int> v;\n"
+              "    std::sort(v.begin(), v.end());\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:3]: (style) Using sort with iterator 'v.begin()' that is always empty.\n", errout.str());
+
+        check("void f() {\n"
+              "    std::vector<int> v;\n"
+              "    v.insert(v.end(), 1);\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("struct A {\n"
+              "    explicit A(std::vector<int>*);\n"
+              "};\n"
+              "A f() {\n"
+              "    std::vector<int> v;\n"
+              "    A a(&v);\n"
+              "    for(auto&& x:v) {}\n"
+              "    return a;\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("static void f1(std::list<std::string>& parameters) {\n"
+              "    parameters.push_back(a);\n"
+              "}\n"
+              "int f2(std::list<std::string>& parameters) {\n"
+              "    f1(parameters);\n"
+              "}\n"
+              "void f3() {\n"
+              "    std::list<std::string> parameters;\n"
+              "    int res = ::f2(parameters);\n"
+              "    for (auto param : parameters) {}\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+    }
+
+    void checkMutexes() {
+        check("void f() {\n"
+              "    static std::mutex m;\n"
+              "    static std::lock_guard<std::mutex> g(m);\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:3]: (warning) Lock guard is defined globally. Lock guards are intended to be local. A global lock guard could lead to a deadlock since it won't unlock until the end of the program.\n", errout.str());
+
+        check("void f() {\n"
+              "    static std::mutex m;\n"
+              "    std::lock_guard<std::mutex> g(m);\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f() {\n"
+              "    static std::mutex m;\n"
+              "    static std::unique_lock<std::mutex> g(m, std::defer_lock);\n"
+              "    static std::lock(g);\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:3]: (warning) Lock guard is defined globally. Lock guards are intended to be local. A global lock guard could lead to a deadlock since it won't unlock until the end of the program.\n", errout.str());
+
+        check("void f() {\n"
+              "    static std::mutex m;\n"
+              "    std::unique_lock<std::mutex> g(m, std::defer_lock);\n"
+              "    std::lock(g);\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f() {\n"
+              "    std::mutex m;\n"
+              "    std::lock_guard<std::mutex> g(m);\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:3]: (warning) The lock is ineffective because the mutex is locked at the same scope as the mutex itself.\n", errout.str());
+
+        check("void f() {\n"
+              "    std::mutex m;\n"
+              "    std::unique_lock<std::mutex> g(m);\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:3]: (warning) The lock is ineffective because the mutex is locked at the same scope as the mutex itself.\n", errout.str());
+
+        check("void f() {\n"
+              "    std::mutex m;\n"
+              "    std::unique_lock<std::mutex> g(m, std::defer_lock);\n"
+              "    std::lock(g);\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:3]: (warning) The lock is ineffective because the mutex is locked at the same scope as the mutex itself.\n", errout.str());
+
+        check("void g();\n"
+              "void f() {\n"
+              "    static std::mutex m;\n"
+              "    m.lock();\n"
+              "    g();\n"
+              "    m.unlock();\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("void g();\n"
+              "void f() {\n"
+              "    std::mutex m;\n"
+              "    m.lock();\n"
+              "    g();\n"
+              "    m.unlock();\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:4]: (warning) The lock is ineffective because the mutex is locked at the same scope as the mutex itself.\n", errout.str());
+
+        check("class A {\n"
+              "    std::mutex m;\n"
+              "    void f() {\n"
+              "        std::lock_guard<std::mutex> g(m);\n"
+              "    }\n"
+              "};\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("class A {\n"
+              "    std::mutex m;\n"
+              "    void g();\n"
+              "    void f() {\n"
+              "        m.lock();\n"
+              "        g();\n"
+              "        m.unlock();\n"
+              "    }\n"
+              "};\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("class A {\n"
+              "    std::mutex m;\n"
+              "    void f() {\n"
+              "        static std::lock_guard<std::mutex> g(m);\n"
+              "    }\n"
+              "};\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:4]: (warning) Lock guard is defined globally. Lock guards are intended to be local. A global lock guard could lead to a deadlock since it won't unlock until the end of the program.\n", errout.str());
+
+        check("std::mutex& h();\n"
+              "void f() {\n"
+              "    auto& m = h();\n"
+              "    std::lock_guard<std::mutex> g(m);\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("void g();\n"
+              "std::mutex& h();\n"
+              "void f() {\n"
+              "    auto& m = h();\n"
+              "    m.lock();\n"
+              "    g();\n"
+              "    m.unlock();\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("std::mutex& h();\n"
+              "void f() {\n"
+              "    auto m = h();\n"
+              "    std::lock_guard<std::mutex> g(m);\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:4]: (warning) The lock is ineffective because the mutex is locked at the same scope as the mutex itself.\n", errout.str());
+
+        check("void g();\n"
+              "std::mutex& h();\n"
+              "void f() {\n"
+              "    auto m = h();\n"
+              "    m.lock();\n"
+              "    g();\n"
+              "    m.unlock();\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("[test.cpp:5]: (warning) The lock is ineffective because the mutex is locked at the same scope as the mutex itself.\n", errout.str());
+
+        check("void foo();\n"
+              "void bar();\n"
+              "void f() {\n"
+              "    std::mutex m;\n"
+              "    std::thread t([&m](){\n"
+              "        m.lock();\n"
+              "        foo();\n"
+              "        m.unlock();\n"
+              "    });\n"
+              "    m.lock();\n"
+              "    bar();\n"
+              "    m.unlock();\n"
+              "}\n",
+              true);
+        ASSERT_EQUALS("", errout.str());
+
+        check("void foo();\n"
+              "void bar();\n"
+              "void f() {\n"
+              "    std::mutex m;\n"
+              "    std::thread t([&m](){\n"
+              "        std::unique_lock<std::mutex> g{m};\n"
+              "        foo();\n"
+              "    });\n"
+              "    std::unique_lock<std::mutex> g{m};\n"
+              "    bar();\n"
               "}\n",
               true);
         ASSERT_EQUALS("", errout.str());

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,16 +25,19 @@
 #include "check.h"
 #include "config.h"
 #include "ctu.h"
+#include "mathlib.h"
+#include "settings.h"
+#include "errortypes.h"
+#include "utils.h"
 
 #include <set>
 #include <string>
 
-class ErrorLogger;
 class Scope;
-class Settings;
 class Token;
 class Tokenizer;
 class Variable;
+class ErrorLogger;
 
 
 struct VariableValue {
@@ -62,6 +65,9 @@ public:
 
     /** @brief Run checks against the normal token list */
     void runChecks(const Tokenizer *tokenizer, const Settings *settings, ErrorLogger *errorLogger) OVERRIDE {
+        if (settings->clang)
+            return;
+
         CheckUninitVar checkUninitVar(tokenizer, settings, errorLogger);
         checkUninitVar.check();
         checkUninitVar.valueFlowUninit();

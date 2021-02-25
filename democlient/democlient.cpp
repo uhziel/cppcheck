@@ -35,7 +35,7 @@ public:
     CppcheckExecutor()
         : ErrorLogger()
         , stoptime(std::time(nullptr)+2U)
-        , cppcheck(*this, false) {
+        , cppcheck(*this, false, nullptr) {
         cppcheck.settings().addEnabled("all");
         cppcheck.settings().inconclusive = true;
     }
@@ -44,8 +44,10 @@ public:
         cppcheck.check("test.cpp", code);
     }
 
+    void bughuntingReport(const std::string&) override {}
+
     void reportOut(const std::string &outmsg) override { }
-    void reportErr(const ErrorLogger::ErrorMessage &msg) override {
+    void reportErr(const ErrorMessage &msg) override {
         const std::string s = msg.toString(true);
 
         std::cout << s << std::endl;
@@ -59,7 +61,7 @@ public:
                         const std::size_t value) override {
         if (std::time(nullptr) >= stoptime) {
             std::cout << "Time to analyse the code exceeded 2 seconds. Terminating.\n\n";
-            cppcheck.terminate();
+            Settings::terminate();
         }
     }
 };

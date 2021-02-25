@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,6 +34,8 @@ class Token;
 class Tokenizer;
 class Type;
 class Variables;
+class Variable;
+class Function;
 
 /// @addtogroup Checks
 /// @{
@@ -70,7 +72,10 @@ public:
 
 private:
     bool isRecordTypeWithoutSideEffects(const Type* type);
+    bool isVariableWithoutSideEffects(const Variable& var);
     bool isEmptyType(const Type* type);
+    bool isFunctionWithoutSideEffects(const Function& func, const Token* functionUsageToken,
+                                      std::list<const Function*> checkedFuncs);
 
     // Error messages..
     void unusedStructMemberError(const Token *tok, const std::string &structname, const std::string &varname, bool isUnion = false);
@@ -100,7 +105,7 @@ private:
                // style
                "- unused variable\n"
                "- allocated but unused variable\n"
-               "- unred variable\n"
+               "- unread variable\n"
                "- unassigned variable\n"
                "- unused struct member\n";
     }

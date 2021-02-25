@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -24,9 +24,9 @@
 
 #include "check.h"
 #include "config.h"
-#include "errorlogger.h"
 #include "library.h"
 #include "settings.h"
+#include "errortypes.h"
 
 #include <map>
 #include <string>
@@ -34,6 +34,8 @@
 
 class Token;
 class Tokenizer;
+class ErrorLogger;
+
 namespace ValueFlow {
     class Value;
 }  // namespace ValueFlow
@@ -107,6 +109,7 @@ private:
     void invalidFunctionArgBoolError(const Token *tok, const std::string &functionName, int argnr);
     void invalidFunctionArgStrError(const Token *tok, const std::string &functionName, nonneg int argnr);
     void ignoredReturnValueError(const Token* tok, const std::string& function);
+    void ignoredReturnErrorCode(const Token* tok, const std::string& function);
     void mathfunctionCallWarning(const Token *tok, const nonneg int numParam = 1);
     void mathfunctionCallWarning(const Token *tok, const std::string& oldexp, const std::string& newexp);
     void memsetZeroBytesError(const Token *tok);

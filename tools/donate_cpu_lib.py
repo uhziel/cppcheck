@@ -7,13 +7,21 @@ import sys
 import socket
 import time
 import re
+import signal
 import tarfile
+import shlex
 
 
 # Version scheme (MAJOR.MINOR.PATCH) should orientate on "Semantic Versioning" https://semver.org/
 # Every change in this script should result in increasing the version number accordingly (exceptions may be cosmetic
 # changes)
-CLIENT_VERSION = "1.1.40"
+CLIENT_VERSION = "1.3.1"
+
+# Timeout for analysis with Cppcheck in seconds
+CPPCHECK_TIMEOUT = 60 * 60
+
+# Return code that is used to mark a timed out analysis
+RETURN_CODE_TIMEOUT = -999
 
 
 def check_requirements():
@@ -33,7 +41,12 @@ def get_cppcheck(cppcheck_path, work_path):
         if os.path.exists(cppcheck_path):
             try:
                 os.chdir(cppcheck_path)
-                subprocess.check_call(['git', 'checkout', '-f', 'master'])
+                try:
+                    subprocess.check_call(['git', 'checkout', '-f', 'main'])
+                except subprocess.CalledProcessError:
+                    subprocess.check_call(['git', 'checkout', '-f', 'master'])
+                    subprocess.check_call(['git', 'pull'])
+                    subprocess.check_call(['git', 'checkout', 'origin/main', '-b', 'main'])
                 subprocess.check_call(['git', 'pull'])
             except:
                 print('Failed to update Cppcheck sources! Retrying..')
@@ -80,7 +93,7 @@ def compile_version(work_path, jobs, version):
         destPath = work_path + '/' + version + '/'
         subprocess.call(['cp', '-R', work_path + '/cppcheck/cfg', destPath])
         subprocess.call(['cp', 'cppcheck', destPath])
-    subprocess.call(['git', 'checkout', 'master'])
+    subprocess.call(['git', 'checkout', 'main'])
     try:
         subprocess.call([work_path + '/' + version + '/cppcheck', '--version'])
     except OSError:
@@ -88,7 +101,7 @@ def compile_version(work_path, jobs, version):
     return True
 
 
-def compile(cppcheck_path, jobs):
+def compile_cppcheck(cppcheck_path, jobs):
     print('Compiling Cppcheck..')
     try:
         os.chdir(cppcheck_path)
@@ -101,47 +114,46 @@ def compile(cppcheck_path, jobs):
 
 def get_cppcheck_versions(server_address):
     print('Connecting to server to get Cppcheck versions..')
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        sock.connect(server_address)
-        sock.send(b'GetCppcheckVersions\n')
-        versions = sock.recv(256)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.connect(server_address)
+            sock.send(b'GetCppcheckVersions\n')
+            versions = sock.recv(256)
     except socket.error as err:
         print('Failed to get cppcheck versions: ' + str(err))
         return None
-    sock.close()
     return versions.decode('utf-8').split()
 
 
 def get_packages_count(server_address):
     print('Connecting to server to get count of packages..')
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        sock.connect(server_address)
-        sock.send(b'getPackagesCount\n')
-        packages = int(sock.recv(64))
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.connect(server_address)
+            sock.send(b'getPackagesCount\n')
+            packages = int(sock.recv(64))
     except socket.error as err:
         print('Failed to get count of packages: ' + str(err))
         return None
-    sock.close()
     return packages
 
 
-def get_package(server_address, package_index = None):
-    print('Connecting to server to get assigned work..')
+def get_package(server_address, package_index=None):
     package = b''
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        sock.connect(server_address)
-        if package_index is None:
-            sock.send(b'get\n')
-        else:
-            request = 'getPackageIdx:' + str(package_index) + '\n'
-            sock.send(request.encode())
-        package = sock.recv(256)
-    except socket.error:
-        pass
-    sock.close()
+    while not package:
+        print('Connecting to server to get assigned work..')
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.connect(server_address)
+                if package_index is None:
+                    sock.send(b'get\n')
+                else:
+                    request = 'getPackageIdx:' + str(package_index) + '\n'
+                    sock.send(request.encode())
+                package = sock.recv(256)
+        except socket.error:
+            print("network or server might be temporarily down.. will try again in 30 seconds..")
+            time.sleep(30)
     return package.decode('utf-8')
 
 
@@ -205,22 +217,21 @@ def unpack_package(work_path, tgz):
     os.chdir(temp_path)
     found = False
     if tarfile.is_tarfile(tgz):
-        tf = tarfile.open(tgz)
-        for member in tf:
-            if member.name.startswith(('/', '..')):
-                # Skip dangerous file names
-                continue
-            elif member.name.lower().endswith(('.c', '.cpp', '.cxx', '.cc', '.c++', '.h', '.hpp',
-                                               '.h++', '.hxx', '.hh', '.tpp', '.txx', '.qml',
-                                               '.sln', '.vcproj', '.vcxproj')):
-                try:
-                    tf.extract(member.name)
-                    found = True
-                except OSError:
-                    pass
-                except AttributeError:
-                    pass
-        tf.close()
+        with tarfile.open(tgz) as tf:
+            for member in tf:
+                if member.name.startswith(('/', '..')):
+                    # Skip dangerous file names
+                    continue
+                elif member.name.lower().endswith(('.c', '.cpp', '.cxx', '.cc', '.c++', '.h', '.hpp',
+                                                   '.h++', '.hxx', '.hh', '.tpp', '.txx', '.qml',
+                                                   '.sln', '.vcproj', '.vcxproj')):
+                    try:
+                        tf.extract(member.name)
+                        found = True
+                    except OSError:
+                        pass
+                    except AttributeError:
+                        pass
     os.chdir(work_path)
     return found
 
@@ -232,18 +243,8 @@ def has_include(path, includes):
         for name in files:
             filename = os.path.join(root, name)
             try:
-                if sys.version_info.major < 3:
-                    f = open(filename, 'rt')
-                else:
-                    f = open(filename, 'rt', errors='ignore')
-                filedata = f.read()
-                try:
-                    # Python2 needs to decode the data first
-                    filedata = filedata.decode(encoding='utf-8', errors='ignore')
-                except AttributeError:
-                    # Python3 directly reads the data into a string object that has no decode()
-                    pass
-                f.close()
+                with open(filename, 'rt', errors='ignore') as f:
+                    filedata = f.read()
                 if re.search(re_expr, filedata, re.MULTILINE):
                     return True
             except IOError:
@@ -254,13 +255,19 @@ def has_include(path, includes):
 def run_command(cmd):
     print(cmd)
     startTime = time.time()
-    p = subprocess.Popen(cmd.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    comm = p.communicate()
+    p = subprocess.Popen(shlex.split(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setsid)
+    try:
+        comm = p.communicate(timeout=CPPCHECK_TIMEOUT)
+        return_code = p.returncode
+    except subprocess.TimeoutExpired:
+        os.killpg(os.getpgid(p.pid), signal.SIGTERM)  # Send the signal to all the process groups
+        comm = p.communicate()
+        return_code = RETURN_CODE_TIMEOUT
     stop_time = time.time()
     stdout = comm[0].decode(encoding='utf-8', errors='ignore')
     stderr = comm[1].decode(encoding='utf-8', errors='ignore')
     elapsed_time = stop_time - startTime
-    return p.returncode, stdout, stderr, elapsed_time
+    return return_code, stdout, stderr, elapsed_time
 
 
 def scan_package(work_path, cppcheck_path, jobs, libraries):
@@ -290,13 +297,16 @@ def scan_package(work_path, cppcheck_path, jobs, libraries):
         sig_start_pos = sig_pos + len(sig_msg)
         sig_num = int(stderr[sig_start_pos:stderr.find(' ', sig_start_pos)])
     print('cppcheck finished with ' + str(returncode) + ('' if sig_num == -1 else ' (signal ' + str(sig_num) + ')'))
+    if returncode == RETURN_CODE_TIMEOUT:
+        print('Timeout!')
+        return returncode, stdout, '', elapsed_time, options, ''
     # generate stack trace for SIGSEGV, SIGABRT, SIGILL, SIGFPE, SIGBUS
-    if returncode in (-11,-6,-4,-8,-7) or sig_num in (11,6,4,8,7):
+    if returncode in (-11, -6, -4, -8, -7) or sig_num in (11, 6, 4, 8, 7):
         print('Crash!')
         stacktrace = ''
         if cppcheck_path == 'cppcheck':
             # re-run within gdb to get a stacktrace
-            cmd = 'gdb --batch --eval-command=run --eval-command=bt --return-child-result --args ' + cppcheck_cmd + " -j1"
+            cmd = 'gdb --batch --eval-command=run --eval-command="bt 50" --return-child-result --args ' + cppcheck_cmd + " -j1"
             dummy, stdout, stderr, elapsed_time = run_command(cmd)
             gdb_pos = stdout.find(" received signal")
             if not gdb_pos == -1:
@@ -393,13 +403,13 @@ def diff_results(work_path, ver1, results1, ver2, results2):
 
 
 def send_all(connection, data):
-    bytes = data.encode('ascii', 'ignore')
-    while bytes:
-        num = connection.send(bytes)
-        if num < len(bytes):
-            bytes = bytes[num:]
+    bytes_ = data.encode('ascii', 'ignore')
+    while bytes_:
+        num = connection.send(bytes_)
+        if num < len(bytes_):
+            bytes_ = bytes_[num:]
         else:
-            bytes = None
+            bytes_ = None
 
 
 def upload_results(package, results, server_address):
@@ -407,11 +417,10 @@ def upload_results(package, results, server_address):
     max_retries = 4
     for retry in range(max_retries):
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect(server_address)
-            cmd = 'write\n'
-            send_all(sock, cmd + package + '\n' + results + '\nDONE')
-            sock.close()
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.connect(server_address)
+                cmd = 'write\n'
+                send_all(sock, cmd + package + '\n' + results + '\nDONE')
             print('Results have been successfully uploaded.')
             return True
         except socket.error as err:
@@ -428,10 +437,9 @@ def upload_info(package, info_output, server_address):
     max_retries = 3
     for retry in range(max_retries):
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect(server_address)
-            send_all(sock, 'write_info\n' + package + '\n' + info_output + '\nDONE')
-            sock.close()
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.connect(server_address)
+                send_all(sock, 'write_info\n' + package + '\n' + info_output + '\nDONE')
             print('Information output has been successfully uploaded.')
             return True
         except socket.error as err:
@@ -446,26 +454,27 @@ def upload_info(package, info_output, server_address):
 def get_libraries():
     libraries = ['posix', 'gnu']
     library_includes = {'boost': ['<boost/'],
-                       # 'cairo': ['<cairo.h>'], <= enable after release of version 1.90
+                       'cairo': ['<cairo.h>'],
                        'cppunit': ['<cppunit/'],
+                       'icu': ['<unicode/', '"unicode/'],
                        'googletest': ['<gtest/gtest.h>'],
-                       'gtk': ['<gtk/gtk.h>', '<glib.h>', '<glib/', '<gnome.h>'],
-                       # 'kde': ['<KGlobal>', '<KApplication>', '<KDE/'], <= enable after release of version 1.90
+                       'gtk': ['<gtk', '<glib.h>', '<glib-', '<glib/', '<gnome'],
+                       'kde': ['<KGlobal>', '<KApplication>', '<KDE/'],
                        'libcerror': ['<libcerror.h>'],
                        'libcurl': ['<curl/curl.h>'],
-                       # 'libsigc++': ['<sigc++/'], <= enable after release of version 1.90
+                       'libsigc++': ['<sigc++/'],
                        'lua': ['<lua.h>', '"lua.h"'],
-                       # 'mfc': ['<afx.h>', '<afxwin.h>', '<afxext.h>'], <= enable after release of version 1.90
-                       # 'microsoft_atl': ['<atlbase.h>'], <= enable after release of version 1.90
+                       'mfc': ['<afx.h>', '<afxwin.h>', '<afxext.h>'],
+                       'microsoft_atl': ['<atlbase.h>'],
                        'microsoft_sal': ['<sal.h>'],
                        'motif': ['<X11/', '<Xm/'],
                        'nspr': ['<prtypes.h>', '"prtypes.h"'],
-                       # 'opencv2': ['<opencv2/', '"opencv2/'], <= enable after release of version 1.90
+                       'opencv2': ['<opencv2/', '"opencv2/'],
                        'opengl': ['<GL/gl.h>', '<GL/glu.h>', '<GL/glut.h>'],
                        'openmp': ['<omp.h>'],
-                       # 'openssl': ['<openssl/'], <= enable after release of version 1.90
+                       'openssl': ['<openssl/'],
                        'python': ['<Python.h>', '"Python.h"'],
-                       'qt': ['<QApplication>', '<QList>', '<qlist.h>', '<QObject>', '<QString>', '<qstring.h>', '<QWidget>', '<QtWidgets>', '<QtGui'],
+                       'qt': ['<QApplication>', '<QList>', '<QKeyEvent>', '<qlist.h>', '<QObject>', '<QFlags>', '<QFileDialog>', '<QTest>', '<QMessageBox>', '<QMetaType>', '<QString>', '<qobjectdefs.h>', '<qstring.h>', '<QWidget>', '<QtWidgets>', '<QtGui'],
                        'ruby': ['<ruby.h>', '<ruby/', '"ruby.h"'],
                        'sdl': ['<SDL.h>', '<SDL/SDL.h>', '<SDL2/SDL.h>'],
                        'sqlite3': ['<sqlite3.h>', '"sqlite3.h"'],

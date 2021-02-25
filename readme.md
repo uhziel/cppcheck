@@ -1,8 +1,8 @@
 # **Cppcheck** 
 
-|Linux Build Status|Windows Build Status|Coverity Scan Build Status|License|
-|:--:|:--:|:--:|:-:|
-|[![Linux Build Status](https://img.shields.io/travis/danmar/cppcheck/master.svg?label=Linux%20build)](https://travis-ci.org/danmar/cppcheck)|[![Windows Build Status](https://img.shields.io/appveyor/ci/danmar/cppcheck/master.svg?label=Windows%20build)](https://ci.appveyor.com/project/danmar/cppcheck/branch/master)|[![Coverity Scan Build Status](https://img.shields.io/coverity/scan/512.svg)](https://scan.coverity.com/projects/512)|[![License](https://img.shields.io/badge/license-GPL3.0-blue.svg)](https://opensource.org/licenses/GPL-3.0) 
+|GitHub Actions|Linux Build Status|Windows Build Status|OSS-Fuzz|Coverity Scan Build Status|License|
+|:-:|:--:|:--:|:--:|:--:|:-:|
+|[![Github Action Status](https://github.com/danmar/cppcheck/workflows/CI/badge.svg)](https://github.com/danmar/cppcheck/actions?query=workflow%3ACI)|[![Linux Build Status](https://img.shields.io/travis/danmar/cppcheck/main.svg?label=Linux%20build)](https://travis-ci.org/danmar/cppcheck)|[![Windows Build Status](https://img.shields.io/appveyor/ci/danmar/cppcheck/main.svg?label=Windows%20build)](https://ci.appveyor.com/project/danmar/cppcheck/branch/main)|[![OSS-Fuzz](https://oss-fuzz-build-logs.storage.googleapis.com/badges/cppcheck.svg)](https://bugs.chromium.org/p/oss-fuzz/issues/list?sort=-opened&can=1&q=proj:cppcheck)|[![Coverity Scan Build Status](https://img.shields.io/coverity/scan/512.svg)](https://scan.coverity.com/projects/512)|[![License](https://img.shields.io/badge/license-GPL3.0-blue.svg)](https://opensource.org/licenses/GPL-3.0) 
 
 ## About the name
 
@@ -18,8 +18,8 @@ A manual is available [online](http://cppcheck.sourceforge.net/manual.pdf).
 
 Cppcheck is a hobby project with limited resources. You can help us by donating CPU (1 core or as many as you like). It is simple:
 
- 1. Download (and extract) Cppcheck source code
- 2. Run script: python cppcheck/tools/donate-cpu.py
+ 1. Download (and extract) Cppcheck source code.
+ 2. Run script: python cppcheck/tools/donate-cpu.py.
 
 The script will analyse debian source code and upload the results to a cppcheck server. We need these results both to improve Cppcheck and to detect regressions.
 
@@ -53,14 +53,16 @@ cmake ..
 cmake --build .
 ```
 
-If you want to compile the GUI you can use the flag
+If you want to compile the GUI you can use the flag.
 -DBUILD_GUI=ON
 
-For rules support (requires pcre) use the flag
+For rules support (requires pcre) use the flag.
 -DHAVE_RULES=ON
 
 For release builds it is recommended that you use:
 -DUSE_MATCHCOMPILER=ON
+
+Using cmake you can generate project files for Visual Studio,XCode,etc.
 
 ### qmake
 
@@ -116,13 +118,13 @@ Flags:
 If you just want to build Cppcheck without dependencies then you can use this command:
 
 ```shell
-g++ -o cppcheck -std=c++11 -Iexternals -Iexternals/simplecpp -Iexternals/tinyxml -Ilib cli/*.cpp lib/*.cpp externals/simplecpp/simplecpp.cpp externals/tinyxml/*.cpp
+g++ -o cppcheck -std=c++11 -Iexternals -Iexternals/simplecpp -Iexternals/tinyxml2 -Ilib cli/*.cpp lib/*.cpp externals/simplecpp/simplecpp.cpp externals/tinyxml2/*.cpp
 ```
 
 If you want to use `--rule` and `--rule-file` then dependencies are needed:
 
 ```shell
-g++ -o cppcheck -std=c++11 -lpcre -DHAVE_RULES -Ilib -Iexternals -Iexternals/simplecpp -Iexternals/tinyxml cli/*.cpp lib/*.cpp externals/simplecpp/simplecpp.cpp externals/tinyxml/*.cpp
+g++ -o cppcheck -std=c++11 -lpcre -DHAVE_RULES -Ilib -Iexternals -Iexternals/simplecpp -Iexternals/tinyxml2 cli/*.cpp lib/*.cpp externals/simplecpp/simplecpp.cpp externals/tinyxml2/*.cpp
 ```
 
 ### MinGW
@@ -145,6 +147,13 @@ sudo apt-get install mingw32
 make CXX=i586-mingw32msvc-g++ LDFLAGS="-lshlwapi" RDYNAMIC=""
 mv cppcheck cppcheck.exe
 ```
+
+## Packages
+
+You can install Cppcheck with yum/apt/brew/etc.
+
+The official rpms are built with these files:
+https://src.fedoraproject.org/rpms/cppcheck/tree/master
 
 ## Webpage
 

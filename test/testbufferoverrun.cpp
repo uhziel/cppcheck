@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,11 +17,13 @@
  */
 
 
+#include "check.h"
 #include "checkbufferoverrun.h"
+#include "config.h"
+#include "ctu.h"
 #include "library.h"
 #include "settings.h"
 #include "testsuite.h"
-#include "token.h"
 #include "tokenize.h"
 
 #include <tinyxml2.h>
@@ -128,6 +130,7 @@ private:
         TEST_CASE(array_index_47); // #5849
         TEST_CASE(array_index_48); // #9478
         TEST_CASE(array_index_49); // #8653
+        TEST_CASE(array_index_50);
         TEST_CASE(array_index_multidim);
         TEST_CASE(array_index_switch_in_for);
         TEST_CASE(array_index_for_in_for);   // FP: #2634
@@ -153,6 +156,7 @@ private:
         TEST_CASE(array_index_function_parameter);
         TEST_CASE(array_index_enum_array); // #8439
         TEST_CASE(array_index_container); // #9386
+        TEST_CASE(array_index_two_for_loops);
 
         TEST_CASE(buffer_overrun_2_struct);
         TEST_CASE(buffer_overrun_3);
@@ -1509,6 +1513,18 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
+    void array_index_50() {
+        check("void f(const char * str) {\n"
+              "    int len = strlen(str);\n"
+              "    (void)str[len - 1];\n"
+              "}\n"
+              "void g() {\n"
+              "    f(\"12345678\");\n"
+              "    f(\"12345\");\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+    }
+
     void array_index_multidim() {
         check("void f()\n"
               "{\n"
@@ -2196,6 +2212,46 @@ private:
         ASSERT_EQUALS("", errout.str());
     }
 
+    void array_index_two_for_loops() {
+        check("bool b();\n"
+              "void f()\n"
+              "{\n"
+              "    int val[50];\n"
+              "    int i, sum=0;\n"
+              "    for (i = 1; b() && i < 50; i++)\n"
+              "        sum += val[i];\n"
+              "    if (i < 50)\n"
+              "        sum -= val[i];\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        check("bool b();\n"
+              "void f()\n"
+              "{\n"
+              "    int val[50];\n"
+              "    int i, sum=0;\n"
+              "    for (i = 1; b() && i < 50; i++)\n"
+              "        sum += val[i];\n"
+              "    for (; i < 50;) {\n"
+              "        sum -= val[i];\n"
+              "        break;\n"
+              "    }\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+
+        check("bool b();\n"
+              "void f()\n"
+              "{\n"
+              "    int val[50];\n"
+              "    int i, sum=0;\n"
+              "    for (i = 1; b() && i < 50; i++)\n"
+              "        sum += val[i];\n"
+              "    for (; i < 50; i++)\n"
+              "        sum -= val[i];\n"
+              "}");
+        ASSERT_EQUALS("", errout.str());
+    }
+
     void buffer_overrun_2_struct() {
         check("struct ABC\n"
               "{\n"
@@ -2799,6 +2855,13 @@ private:
               "    dostuff(x+i);\n"
               "}");
         ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:4]: (portability) Undefined behaviour, when 'i' is 123 the pointer arithmetic 'x+i' is out of bounds.\n", errout.str());
+
+        check("void f(int i) {\n"
+              "    char x[10];\n"
+              "    if (i == -1) {}\n"
+              "    dostuff(x+i);\n"
+              "}");
+        ASSERT_EQUALS("[test.cpp:3] -> [test.cpp:4]: (portability) Undefined behaviour, when 'i' is -1 the pointer arithmetic 'x+i' is out of bounds.\n", errout.str());
 
         check("void f() {\n" // #6350 - fp when there is cast of buffer
               "  wchar_t buf[64];\n"
@@ -4392,6 +4455,33 @@ private:
               "    A x;\n"
               "    int * i = &x.i;\n"
               "    return i[0]; \n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f() {\n"
+              "  int x = 0;\n"
+              "  std::map<int, int*> m;\n"
+              "  m[0] = &x;\n"
+              "  m[1] = &x;\n"
+              "}\n");
+        ASSERT_EQUALS("", errout.str());
+
+        check("int f() {\n"
+              "  int x = 0;\n"
+              "  std::map<int, int*> m;\n"
+              "  m[0] = &x;\n"
+              "  return m[0][1];\n"
+              "}\n");
+        ASSERT_EQUALS(
+            "[test.cpp:4] -> [test.cpp:5]: (error) The address of local variable 'x' is accessed at non-zero index.\n",
+            errout.str());
+
+        check("int f(int * y) {\n"
+              "  int x = 0;\n"
+              "  std::map<int, int*> m;\n"
+              "  m[0] = &x;\n"
+              "  m[1] = y;\n"
+              "  return m[1][1];\n"
               "}\n");
         ASSERT_EQUALS("", errout.str());
     }

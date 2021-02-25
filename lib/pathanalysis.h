@@ -1,13 +1,11 @@
 #ifndef GUARD_PATHANALYSIS_H
 #define GUARD_PATHANALYSIS_H
 
+#include "errortypes.h"
+
 #include <functional>
 
-#include "errorlogger.h"
-#include "utils.h"
-
 class Library;
-class Settings;
 class Scope;
 class Token;
 
@@ -29,15 +27,8 @@ struct PathAnalysis {
     };
 
     void forward(const std::function<Progress(const Info&)>& f) const;
-    template<class F>
-    void forwardAll(F f) {
-        forward([&](const Info& info) {
-            f(info);
-            return Progress::Continue;
-        });
-    }
-    template<class Predicate>
-    Info forwardFind(Predicate pred) {
+
+    Info forwardFind(std::function<bool(const Info&)> pred) {
         Info result{};
         forward([&](const Info& info) {
             if (pred(info)) {

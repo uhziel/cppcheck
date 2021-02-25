@@ -23,6 +23,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <float.h>
 
 void bufferAccessOutOfBounds(void)
 {
@@ -82,6 +83,50 @@ void bufferAccessOutOfBounds(void)
     // cppcheck-suppress bufferAccessOutOfBounds
     memset(pAlloc1, 0, 17);
     free(pAlloc1);
+}
+
+void memleak_aligned_alloc(void)
+{
+    // cppcheck-suppress unreadVariable
+    char * alignedBuf = aligned_alloc(8, 16);
+    // cppcheck-suppress memleak
+}
+
+void pointerLessThanZero_aligned_alloc(void)
+{
+    char * alignedBuf = aligned_alloc(8, 16);
+    // cppcheck-suppress pointerLessThanZero
+    if (alignedBuf < 0) return;
+    free(alignedBuf);
+
+    // no warning is expected for
+    alignedBuf = aligned_alloc(8, 16);
+    if (alignedBuf == 0) return;
+    free(alignedBuf);
+
+    // no warning is expected for
+    alignedBuf = aligned_alloc(8, 16);
+    if (alignedBuf) free(alignedBuf);
+}
+
+void unusedRetVal_aligned_alloc(void)
+{
+    // cppcheck-suppress ignoredReturnValue
+    // cppcheck-suppress leakReturnValNotUsed
+    aligned_alloc(8, 16);
+}
+
+void uninitvar_aligned_alloc(size_t alignment, size_t size)
+{
+    size_t uninitVar;
+    // cppcheck-suppress uninitvar
+    free(aligned_alloc(uninitVar, size));
+    // cppcheck-suppress uninitvar
+    free(aligned_alloc(alignment, uninitVar));
+    // cppcheck-suppress uninitvar
+    free(aligned_alloc(uninitVar, uninitVar));
+    // no warning is expected
+    free(aligned_alloc(alignment, size));
 }
 
 void bufferAccessOutOfBounds_libraryDirectionConfiguration(void)
@@ -592,6 +637,63 @@ void uninitvar_acosh(void)
     long double ld;
     // cppcheck-suppress uninitvar
     (void)acoshl(ld);
+}
+
+void invalidFunctionArg_acosh(void)
+{
+    float f = .999f;
+    // cppcheck-suppress invalidFunctionArg
+    (void)acoshf(f);
+    f = 1.0f;
+    (void)acoshf(f);
+
+    double d = .999;
+    // cppcheck-suppress invalidFunctionArg
+    (void)acosh(d);
+    d = 1.0;
+    (void)acosh(d);
+
+    long double ld = .999L;
+    // cppcheck-suppress invalidFunctionArg
+    (void)acoshl(ld);
+    ld = 1.0;
+    (void)acoshl(ld);
+}
+
+void invalidFunctionArg_atanh(void)
+{
+    float f = 1.00001f;
+    // cppcheck-suppress invalidFunctionArg
+    (void)atanhf(f);
+    f = 1.0f;
+    (void)atanhf(f);
+    f = -1.0f;
+    (void)atanhf(f);
+    f = -1.00001f;
+    // cppcheck-suppress invalidFunctionArg
+    (void)atanhf(f);
+
+    double d = 1.00001;
+    // cppcheck-suppress invalidFunctionArg
+    (void)atanh(d);
+    d = 1.0;
+    (void)atanh(d);
+    d = -1.0;
+    (void)atanh(d);
+    d = -1.00001;
+    // cppcheck-suppress invalidFunctionArg
+    (void)atanh(d);
+
+    long double ld = 1.00001L;
+    // cppcheck-suppress invalidFunctionArg
+    (void)atanhl(ld);
+    ld = 1.0L;
+    (void)atanhl(ld);
+    ld = -1.0L;
+    (void)atanhl(ld);
+    ld = -1.00001L;
+    // cppcheck-suppress invalidFunctionArg
+    (void)atanhl(ld);
 }
 
 void uninitvar_asctime(void)
@@ -3033,6 +3135,78 @@ void invalidFunctionArg_strchr(char *cs, int c)
     (void)strchr(cs, 256);
 }
 
+void invalidFunctionArg_log10(float f, double d, const long double ld)
+{
+    // cppcheck-suppress invalidFunctionArg
+    // cppcheck-suppress wrongmathcall
+    (void)log10f(0.0f);
+    (void)log10f(1.4013e-45f); // note: calculated by nextafterf(0.0f, 1.0f);
+    (void)log10f(f);
+    (void)log10f(FLT_MAX);
+
+    // cppcheck-suppress invalidFunctionArg
+    // cppcheck-suppress wrongmathcall
+    (void)log10(0.0);
+    (void)log10(4.94066e-324); // note: calculated by nextafterf(0.0, 1.0);
+    (void)log10(d);
+    (void)log10(DBL_MAX);
+
+    // cppcheck-suppress invalidFunctionArg
+    // cppcheck-suppress wrongmathcall
+    (void)log10l(0.0L);
+    (void)log10l(4.94066e-324L); // note: calculated by nextafterf(0.0L, 1.0L);
+    (void)log10l(ld);
+    (void)log10l(LDBL_MAX);
+}
+
+void invalidFunctionArg_log(float f, double d, const long double ld)
+{
+    // cppcheck-suppress invalidFunctionArg
+    // cppcheck-suppress wrongmathcall
+    (void)logf(0.0f);
+    (void)logf(1.4013e-45f); // note: calculated by nextafterf(0.0f, 1.0f);
+    (void)logf(f);
+    (void)logf(FLT_MAX);
+
+    // cppcheck-suppress invalidFunctionArg
+    // cppcheck-suppress wrongmathcall
+    (void)log(0.0);
+    (void)log(4.94066e-324); // note: calculated by nextafterf(0.0, 1.0);
+    (void)log(d);
+    (void)log(DBL_MAX);
+
+    // cppcheck-suppress invalidFunctionArg
+    // cppcheck-suppress wrongmathcall
+    (void)logl(0.0L);
+    (void)logl(4.94066e-324L); // note: calculated by nextafterf(0.0L, 1.0L);
+    (void)logl(ld);
+    (void)logl(LDBL_MAX);
+}
+
+void invalidFunctionArg_log2(float f, double d, const long double ld)
+{
+    // cppcheck-suppress invalidFunctionArg
+    // cppcheck-suppress wrongmathcall
+    (void)log2f(0.0f);
+    (void)log2f(1.4013e-45f); // note: calculated by nextafterf(0.0f, 1.0f);
+    (void)log2f(f);
+    (void)log2f(FLT_MAX);
+
+    // cppcheck-suppress invalidFunctionArg
+    // cppcheck-suppress wrongmathcall
+    (void)log2(0.0);
+    (void)log2(4.94066e-324); // note: calculated by nextafterf(0.0, 1.0);
+    (void)log2(d);
+    (void)log2(DBL_MAX);
+
+    // cppcheck-suppress invalidFunctionArg
+    // cppcheck-suppress wrongmathcall
+    (void)log2l(0.0L);
+    (void)log2l(4.94066e-324L); // note: calculated by nextafterf(0.0L, 1.0L);
+    (void)log2l(ld);
+    (void)log2l(LDBL_MAX);
+}
+
 void uninitvar_wcschr(void)
 {
     wchar_t *cs;
@@ -3708,7 +3882,6 @@ void valid_vsprintf_helper(const char * format, ...)
 void valid_vsprintf()
 {
     // buffer will contain "2\0" => no bufferAccessOutOfBounds
-    // cppcheck-suppress checkLibraryFunction
     // cppcheck-suppress checkLibraryNoReturn
     valid_vsprintf_helper("%1.0f", 2.0f);
 }
@@ -3904,6 +4077,126 @@ void invalidFunctionArgBool_abs(bool b, double x, double y)
     (void)abs(b); // #6990
     // cppcheck-suppress invalidFunctionArgBool
     (void)abs(x<y); // #5635
+}
+
+int invalidFunctionArgBool_tolower(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)tolower(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return tolower(c != 0);
+}
+
+int invalidFunctionArgBool_toupper(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)toupper(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return toupper(c != 0);
+}
+
+bool invalidFunctionArgBool_iscntrl(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)iscntrl(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return iscntrl(c != 0);
+}
+
+bool invalidFunctionArgBool_isalpha(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)isalpha(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return isalpha(c != 0);
+}
+
+bool invalidFunctionArgBool_isalnum(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)isalnum(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return isalnum(c != 0);
+}
+
+bool invalidFunctionArgBool_isspace(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)isspace(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return isspace(c != 0);
+}
+
+bool invalidFunctionArgBool_isdigit(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)isdigit(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return isdigit(c != 0);
+}
+
+bool invalidFunctionArgBool_isgraph(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)isgraph(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return isgraph(c != 0);
+}
+
+bool invalidFunctionArgBool_islower(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)islower(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return islower(c != 0);
+}
+
+bool invalidFunctionArgBool_iswcntrl(bool b, wint_t c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)iswcntrl(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return iswcntrl(c != 0);
+}
+
+bool invalidFunctionArgBool_isprint(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)isprint(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return isprint(c != 0);
+}
+
+bool invalidFunctionArgBool_isblank(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)isblank(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return isblank(c != 0);
+}
+
+bool invalidFunctionArgBool_ispunct(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)ispunct(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return ispunct(c != 0);
+}
+
+bool invalidFunctionArgBool_isupper(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)isupper(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return isupper(c != 0);
+}
+
+bool invalidFunctionArgBool_isxdigit(bool b, int c)
+{
+    // cppcheck-suppress invalidFunctionArgBool
+    (void)isxdigit(b);
+    // cppcheck-suppress invalidFunctionArgBool
+    return isxdigit(c != 0);
 }
 
 void invalidFunctionArg(char c)

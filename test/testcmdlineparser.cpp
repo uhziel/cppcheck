@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -106,6 +106,8 @@ private:
         TEST_CASE(stdc99);
         TEST_CASE(stdcpp11);
         TEST_CASE(platform);
+        TEST_CASE(plistEmpty);
+        TEST_CASE(plistDoesNotExist);
         TEST_CASE(suppressionsOld); // TODO: Create and test real suppression file
         TEST_CASE(suppressions);
         TEST_CASE(suppressionsNoFile);
@@ -339,7 +341,7 @@ private:
     void defines2() {
         REDIRECT;
         const char * const argv[] = {"cppcheck", "-D_WIN32", "-DNODEBUG", "file.cpp"};
-        settings.userDefines.clear();;
+        settings.userDefines.clear();
         ASSERT(defParser.parseFromArgs(4, argv));
         ASSERT_EQUALS("_WIN32=1;NODEBUG=1", settings.userDefines);
     }
@@ -715,6 +717,22 @@ private:
         settings.platform(Settings::Unspecified);
         ASSERT(defParser.parseFromArgs(3, argv));
         ASSERT(settings.platformType == Settings::Win64);
+    }
+
+    void plistEmpty() {
+        REDIRECT;
+        const char * const argv[] = {"cppcheck", "--plist-output=", "file.cpp"};
+        settings.plistOutput = "";
+        ASSERT(defParser.parseFromArgs(3, argv));
+        ASSERT(settings.plistOutput == "./");
+    }
+
+    void plistDoesNotExist() {
+        REDIRECT;
+        const char * const argv[] = {"cppcheck", "--plist-output=./cppcheck_reports", "file.cpp"};
+        settings.plistOutput = "";
+        // Fails since folder pointed by --plist-output= does not exist
+        ASSERT_EQUALS(false, defParser.parseFromArgs(3, argv));
     }
 
     void suppressionsOld() {

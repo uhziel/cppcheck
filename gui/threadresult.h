@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2018 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -73,7 +73,8 @@ public:
     * ErrorLogger methods
     */
     void reportOut(const std::string &outmsg) override;
-    void reportErr(const ErrorLogger::ErrorMessage &msg) override;
+    void reportErr(const ErrorMessage &msg) override;
+    void bughuntingReport(const std::string &str) override;
 
 public slots:
 
@@ -110,6 +111,9 @@ signals:
     * @param item Error data
     */
     void debugError(const ErrorItem &item);
+
+    /** @brief bug hunting report */
+    void bughuntingReportLine(QString line);
 
 protected:
 

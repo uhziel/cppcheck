@@ -10,16 +10,22 @@
 #include <gmock/gmock-generated-matchers.h>
 #include <gtest/gtest.h>
 
-// #9397 syntaxError when MATCHER_P is not known
+
 namespace ExampleNamespace {
     constexpr long long TOLERANCE = 10;
 
-    MATCHER_P(ExampleMatcherTest, expected, "")
+    // #9397 syntaxError when MATCHER_P is not known
+    MATCHER_P(ExampleMatcherPTest, expected, "")
     {
         return ((arg <= (expected + TOLERANCE)) && (arg >= (expected - TOLERANCE)));
     }
-}
 
+    // syntaxError when MATCHER is not known
+    MATCHER(ExampleMatcherTest, "")
+    {
+        return (arg == TOLERANCE);
+    }
+}
 
 TEST(ASSERT, ASSERT)
 {
@@ -29,4 +35,18 @@ TEST(ASSERT, ASSERT)
     a[0] = 10;
 
     free(a);
+}
+
+// Avoid syntax error: https://sourceforge.net/p/cppcheck/discussion/general/thread/6ccc7283e2/
+TEST(test_cppcheck, cppcheck)
+{
+    TestStruct<int> it;
+    ASSERT_THROW(it.operator->(), std::out_of_range);
+}
+
+// #9964 - avoid compareBoolExpressionWithInt false positive
+TEST(Test, assert_false_fp)
+{
+    // cppcheck-suppress checkLibraryNoReturn
+    ASSERT_FALSE(errno < 0);
 }

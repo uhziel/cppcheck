@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -48,6 +48,7 @@ private:
         TEST_CASE(onemasksamepath);
         TEST_CASE(onemasksamepathdifferentcase);
         TEST_CASE(onemasksamepathwithfile);
+        TEST_CASE(onemaskshorterpath);
         TEST_CASE(onemaskdifferentdir1);
         TEST_CASE(onemaskdifferentdir2);
         TEST_CASE(onemaskdifferentdir3);
@@ -103,6 +104,15 @@ private:
 
     void onemasksamepathwithfile() const {
         ASSERT(srcMatcher.match("src/file.txt"));
+    }
+
+    void onemaskshorterpath() const {
+        const std::string longerExclude("longersrc/");
+        const std::string shorterToMatch("src/");
+        ASSERT(shorterToMatch.length() < longerExclude.length());
+        PathMatch match(std::vector<std::string>(1, longerExclude));
+        ASSERT(match.match(longerExclude));
+        ASSERT(!match.match(shorterToMatch));
     }
 
     void onemaskdifferentdir1() const {

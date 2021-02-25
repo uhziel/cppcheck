@@ -20,7 +20,15 @@ Compiling
 
     To build the GUI, you need Qt.
 
-    When building the command line tool, PCRE is optional. It is used if you build with rules.
+    While building the command line tool, PCRE is optional. It is used if you build with rules.
+
+    For "bug hunting" you need Z3. Installing Z3:
+     * debian: "sudo apt-get install libz3-dev
+     * windows:
+       32-bit: https://github.com/Z3Prover/z3/releases/download/z3-4.8.7/z3-4.8.7-x86-win.zip
+       64-bit: https://github.com/Z3Prover/z3/releases/download/z3-4.8.7/z3-4.8.7-x64-win.zip
+    If you do not want to install z3 in some "system" include/lib paths you can put the files in
+    cppcheck/externals/z3/include and cppcheck/externals/z3/bin
 
     There are multiple compilation choices:
       * qmake - cross platform build tool
@@ -87,10 +95,10 @@ Compiling
     g++ (for experts)
     =================
         If you just want to build Cppcheck without dependencies then you can use this command:
-            g++ -o cppcheck -std=c++11 -Iexternals -Iexternals/simplecpp -Iexternals/tinyxml -Ilib cli/*.cpp lib/*.cpp externals/simplecpp/simplecpp.cpp externals/tinyxml/*.cpp
+            g++ -o cppcheck -std=c++11 -Iexternals -Iexternals/simplecpp -Iexternals/tinyxml2 -Ilib cli/*.cpp lib/*.cpp externals/simplecpp/simplecpp.cpp externals/tinyxml2/*.cpp
 
         If you want to use --rule and --rule-file then dependencies are needed:
-            g++ -o cppcheck -std=c++11 -lpcre -DHAVE_RULES -Ilib -Iexternals -Iexternals/simplecpp -Iexternals/tinyxml cli/*.cpp lib/*.cpp externals/simplecpp/simplecpp.cpp externals/tinyxml/*.cpp
+            g++ -o cppcheck -std=c++11 -lpcre -DHAVE_RULES -Ilib -Iexternals -Iexternals/simplecpp -Iexternals/tinyxml2 cli/*.cpp lib/*.cpp externals/simplecpp/simplecpp.cpp externals/tinyxml2/*.cpp
 
     mingw
     =====
@@ -105,11 +113,18 @@ Compiling
         3. Add all cpp files in the externals folders to the project file / makefile.
         4. Compile.
 
-Cross compiling Win32 (CLI) version of Cppcheck in Linux
+    Cross compiling Win32 (CLI) version of Cppcheck in Linux
 
-    sudo apt-get install mingw32
-    make CXX=i586-mingw32msvc-g++ LDFLAGS="-lshlwapi"
-    mv cppcheck cppcheck.exe
+        sudo apt-get install mingw32
+        make CXX=i586-mingw32msvc-g++ LDFLAGS="-lshlwapi"
+        mv cppcheck cppcheck.exe
+
+Packages
+
+    You can install Cppcheck with yum/apt/brew/etc.
+
+    The official rpms are built with these files:
+    https://src.fedoraproject.org/rpms/cppcheck/tree/master
 
 Webpage
 

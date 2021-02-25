@@ -12,15 +12,16 @@ NewSuppressionDialog::NewSuppressionDialog(QWidget *parent) :
 
     class QErrorLogger : public ErrorLogger {
     public:
-        virtual void reportOut(const std::string &/*outmsg*/) {}
-        virtual void reportErr(const ErrorLogger::ErrorMessage &msg) {
+        void reportOut(const std::string &/*outmsg*/) override {}
+        void reportErr(const ErrorMessage &msg) override {
             errorIds << QString::fromStdString(msg.id);
         }
+        void bughuntingReport(const std::string &/*str*/) override {}
         QStringList errorIds;
     };
 
     QErrorLogger errorLogger;
-    CppCheck cppcheck(errorLogger,false);
+    CppCheck cppcheck(errorLogger, false, nullptr);
     cppcheck.getErrorMessages();
     errorLogger.errorIds.sort();
 

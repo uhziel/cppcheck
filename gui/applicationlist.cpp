@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2018 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -185,7 +185,7 @@ void ApplicationList::clear()
     mDefaultApplicationIndex = -1;
 }
 
-bool ApplicationList::checkAndAddApplication(QString appPath, QString name, QString parameters)
+bool ApplicationList::checkAndAddApplication(const QString& appPath, const QString& name, const QString& parameters)
 {
     if (QFileInfo(appPath).exists() && QFileInfo(appPath).isExecutable()) {
         Application app;

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -57,6 +57,9 @@ private:
     * @return Project root path.
     */
     QString getRootPath() const;
+
+    QStringList getProjectConfigurations() const;
+    void setProjectConfigurations(const QStringList &configs);
 
     QString getImportProject() const;
 
@@ -212,9 +215,14 @@ protected slots:
     void editIncludeDir();
 
     /**
-    * @brief Add new path to exclude.
+    * @brief Add new path to exclude list.
     */
     void addExcludePath();
+
+    /**
+    * @brief Add new file to exclude list.
+    */
+    void addExcludeFile();
 
     /**
     * @brief Edit excluded path in the list.
@@ -256,6 +264,11 @@ protected slots:
      */
     void browseMisraFile();
 
+    /**
+     * @brief Check for all VS configurations
+     */
+    void checkAllVSConfigs();
+
 protected:
 
     /**
@@ -295,6 +308,8 @@ protected:
     int getSuppressionIndex(const QString &shortText) const;
 
 private:
+    QStringList getProjectConfigs(const QString &fileName);
+
     Ui::ProjectFile mUI;
 
     /**

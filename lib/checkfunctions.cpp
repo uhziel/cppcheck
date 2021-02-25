@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -85,7 +85,8 @@ void CheckFunctions::checkProhibitedFunctions()
                 const Library::WarnInfo* wi = mSettings->library.getWarnInfo(tok);
                 if (wi) {
                     if (mSettings->isEnabled(wi->severity) && mSettings->standards.c >= wi->standards.c && mSettings->standards.cpp >= wi->standards.cpp) {
-                        reportError(tok, wi->severity, tok->str() + "Called", wi->message, CWE477, false);
+                        const std::string daca = mSettings->daca ? "prohibited" : "";
+                        reportError(tok, wi->severity, daca + tok->str() + "Called", wi->message, CWE477, false);
                     }
                 }
             }
@@ -191,7 +192,7 @@ void CheckFunctions::invalidFunctionArgStrError(const Token *tok, const std::str
 //---------------------------------------------------------------------------
 void CheckFunctions::checkIgnoredReturnValue()
 {
-    if (!mSettings->isEnabled(Settings::WARNING))
+    if (!mSettings->isEnabled(Settings::WARNING) && !mSettings->isEnabled(Settings::STYLE))
         return;
 
     const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
@@ -215,9 +216,15 @@ void CheckFunctions::checkIgnoredReturnValue()
             }
 
             if ((!tok->function() || !Token::Match(tok->function()->retDef, "void %name%")) &&
-                (mSettings->library.isUseRetVal(tok) || (tok->function() && tok->function()->isAttributeNodiscard())) &&
                 !WRONG_DATA(!tok->next()->astOperand1(), tok)) {
-                ignoredReturnValueError(tok, tok->next()->astOperand1()->expressionString());
+                const Library::UseRetValType retvalTy = mSettings->library.getUseRetValType(tok);
+                if (mSettings->isEnabled(Settings::WARNING) &&
+                    ((retvalTy == Library::UseRetValType::DEFAULT) ||
+                     (tok->function() && tok->function()->isAttributeNodiscard())))
+                    ignoredReturnValueError(tok, tok->next()->astOperand1()->expressionString());
+                else if (mSettings->isEnabled(Settings::STYLE) &&
+                         retvalTy == Library::UseRetValType::ERROR_CODE)
+                    ignoredReturnErrorCode(tok, tok->next()->astOperand1()->expressionString());
             }
         }
     }
@@ -229,6 +236,11 @@ void CheckFunctions::ignoredReturnValueError(const Token* tok, const std::string
                 "$symbol:" + function + "\nReturn value of function $symbol() is not used.", CWE252, false);
 }
 
+void CheckFunctions::ignoredReturnErrorCode(const Token* tok, const std::string& function)
+{
+    reportError(tok, Severity::style, "ignoredReturnErrorCode",
+                "$symbol:" + function + "\nError code from the return value of function $symbol() is not used.", CWE252, false);
+}
 
 //---------------------------------------------------------------------------
 // Detect passing wrong values to <cmath> functions like atan(0, x);
@@ -264,7 +276,7 @@ void CheckFunctions::checkMathFunctions()
                 // fmod ( x , y) If y is zero, then either a range error will occur or the function will return zero (implementation-defined).
                 else if (Token::Match(tok, "fmod|fmodf|fmodl (")) {
                     const Token* nextArg = tok->tokAt(2)->nextArgument();
-                    if (nextArg && nextArg->isNumber() && MathLib::isNullValue(nextArg->str()))
+                    if (nextArg && MathLib::isNullValue(nextArg->str()))
                         mathfunctionCallWarning(tok, 2);
                 }
                 // pow ( x , y) If x is zero, and y is negative --> division by zero
@@ -328,7 +340,7 @@ void CheckFunctions::memsetZeroBytes()
                 if (WRONG_DATA(arguments.size() != 3U, tok))
                     continue;
                 const Token* lastParamTok = arguments[2];
-                if (lastParamTok->str() == "0")
+                if (MathLib::isNullValue(lastParamTok->str()))
                     memsetZeroBytesError(tok);
             }
         }
@@ -434,6 +446,9 @@ void CheckFunctions::checkLibraryMatchFunctions()
             continue;
 
         if (tok->linkAt(1)->strAt(1) == "(")
+            continue;
+
+        if (tok->function())
             continue;
 
         if (!mSettings->library.isNotLibraryFunction(tok))

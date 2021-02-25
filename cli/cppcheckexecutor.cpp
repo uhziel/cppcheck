@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,7 +29,6 @@
 #include "pathmatch.h"
 #include "preprocessor.h"
 #include "settings.h"
-#include "standards.h"
 #include "suppressions.h"
 #include "threadexecutor.h"
 #include "utils.h"
@@ -41,6 +40,7 @@
 #include <cstring>
 #include <iostream>
 #include <list>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -79,13 +79,14 @@
 /*static*/ FILE* CppCheckExecutor::mExceptionOutput = stdout;
 
 CppCheckExecutor::CppCheckExecutor()
-    : mSettings(nullptr), mLatestProgressOutputTime(0), mErrorOutput(nullptr), mShowAllErrors(false)
+    : mSettings(nullptr), mLatestProgressOutputTime(0), mErrorOutput(nullptr), mBugHuntingReport(nullptr), mShowAllErrors(false)
 {
 }
 
 CppCheckExecutor::~CppCheckExecutor()
 {
     delete mErrorOutput;
+    delete mBugHuntingReport;
 }
 
 bool CppCheckExecutor::parseFromArgs(CppCheck *cppcheck, int argc, const char* const argv[])
@@ -106,9 +107,9 @@ bool CppCheckExecutor::parseFromArgs(CppCheck *cppcheck, int argc, const char* c
 
         if (parser.getShowErrorMessages()) {
             mShowAllErrors = true;
-            std::cout << ErrorLogger::ErrorMessage::getXMLHeader();
+            std::cout << ErrorMessage::getXMLHeader();
             cppcheck->getErrorMessages();
-            std::cout << ErrorLogger::ErrorMessage::getXMLFooter() << std::endl;
+            std::cout << ErrorMessage::getXMLFooter() << std::endl;
         }
 
         if (parser.exitAfterPrinting()) {
@@ -158,7 +159,22 @@ bool CppCheckExecutor::parseFromArgs(CppCheck *cppcheck, int argc, const char* c
 #else
     const bool caseSensitive = true;
 #endif
-    if (!pathnames.empty()) {
+    if (!mSettings->project.fileSettings.empty() && !mSettings->fileFilter.empty()) {
+        // filter only for the selected filenames from all project files
+        std::list<ImportProject::FileSettings> newList;
+
+        for (const ImportProject::FileSettings &fsetting : settings.project.fileSettings) {
+            if (matchglob(mSettings->fileFilter, fsetting.filename)) {
+                newList.emplace_back(fsetting);
+            }
+        }
+        if (!newList.empty())
+            settings.project.fileSettings = newList;
+        else {
+            std::cout << "cppcheck: error: could not find any files matching the filter." << std::endl;
+            return false;
+        }
+    } else if (!pathnames.empty()) {
         // Execute recursiveAddFiles() to each given file parameter
         const PathMatch matcher(ignored, caseSensitive);
         for (const std::string &pathname : pathnames)
@@ -170,7 +186,20 @@ bool CppCheckExecutor::parseFromArgs(CppCheck *cppcheck, int argc, const char* c
         if (!ignored.empty())
             std::cout << "cppcheck: Maybe all paths were ignored?" << std::endl;
         return false;
+    } else if (!mSettings->fileFilter.empty() && settings.project.fileSettings.empty()) {
+        std::map<std::string, std::size_t> newMap;
+        for (std::map<std::string, std::size_t>::const_iterator i = mFiles.begin(); i != mFiles.end(); ++i)
+            if (matchglob(mSettings->fileFilter, i->first)) {
+                newMap[i->first] = i->second;
+            }
+        mFiles = newMap;
+        if (mFiles.empty()) {
+            std::cout << "cppcheck: error: could not find any files matching the filter." << std::endl;
+            return false;
+        }
+
     }
+
     return true;
 }
 
@@ -181,21 +210,29 @@ int CppCheckExecutor::check(int argc, const char* const argv[])
 
     CheckUnusedFunctions::clear();
 
-    CppCheck cppCheck(*this, true);
+    CppCheck cppCheck(*this, true, executeCommand);
 
     const Settings& settings = cppCheck.settings();
     mSettings = &settings;
 
     if (!parseFromArgs(&cppCheck, argc, argv)) {
+        mSettings = nullptr;
         return EXIT_FAILURE;
     }
     if (Settings::terminated()) {
+        mSettings = nullptr;
         return EXIT_SUCCESS;
     }
-    if (cppCheck.settings().exceptionHandling) {
-        return check_wrapper(cppCheck, argc, argv);
-    }
-    return check_internal(cppCheck, argc, argv);
+
+    int ret;
+
+    if (cppCheck.settings().exceptionHandling)
+        ret = check_wrapper(cppCheck, argc, argv);
+    else
+        ret = check_internal(cppCheck, argc, argv);
+
+    mSettings = nullptr;
+    return ret;
 }
 
 void CppCheckExecutor::setSettings(const Settings &settings)
@@ -815,8 +852,8 @@ int CppCheckExecutor::check_internal(CppCheck& cppcheck, int /*argc*/, const cha
     for (const std::string &lib : settings.libraries) {
         if (!tryLoadLibrary(settings.library, argv[0], lib.c_str())) {
             const std::string msg("Failed to load the library " + lib);
-            const std::list<ErrorLogger::ErrorMessage::FileLocation> callstack;
-            ErrorLogger::ErrorMessage errmsg(callstack, emptyString, Severity::information, msg, "failedToLoadCfg", false);
+            const std::list<ErrorMessage::FileLocation> callstack;
+            ErrorMessage errmsg(callstack, emptyString, Severity::information, msg, "failedToLoadCfg", false);
             reportErr(errmsg);
             return EXIT_FAILURE;
         }
@@ -830,7 +867,7 @@ int CppCheckExecutor::check_internal(CppCheck& cppcheck, int /*argc*/, const cha
         windows = tryLoadLibrary(settings.library, argv[0], "windows.cfg");
 
     if (!std || !posix || !windows) {
-        const std::list<ErrorLogger::ErrorMessage::FileLocation> callstack;
+        const std::list<ErrorMessage::FileLocation> callstack;
         const std::string msg("Failed to load " + std::string(!std ? "std.cfg" : !posix ? "posix.cfg" : "windows.cfg") + ". Your Cppcheck installation is broken, please re-install.");
 #ifdef FILESDIR
         const std::string details("The Cppcheck binary was compiled with FILESDIR set to \""
@@ -842,7 +879,7 @@ int CppCheckExecutor::check_internal(CppCheck& cppcheck, int /*argc*/, const cha
                                   "std.cfg should be available in " + cfgfolder + " or the FILESDIR "
                                   "should be configured.");
 #endif
-        ErrorLogger::ErrorMessage errmsg(callstack, emptyString, Severity::information, msg+" "+details, "failedToLoadCfg", false);
+        ErrorMessage errmsg(callstack, emptyString, Severity::information, msg+" "+details, "failedToLoadCfg", false);
         reportErr(errmsg);
         return EXIT_FAILURE;
     }
@@ -855,13 +892,13 @@ int CppCheckExecutor::check_internal(CppCheck& cppcheck, int /*argc*/, const cha
     }
 
     if (settings.xml) {
-        reportErr(ErrorLogger::ErrorMessage::getXMLHeader());
+        reportErr(ErrorMessage::getXMLHeader());
     }
 
     if (!settings.buildDir.empty()) {
         std::list<std::string> fileNames;
         for (std::map<std::string, std::size_t>::const_iterator i = mFiles.begin(); i != mFiles.end(); ++i)
-            fileNames.push_back(i->first);
+            fileNames.emplace_back(i->first);
         AnalyzerInformation::writeFilesTxt(settings.buildDir, fileNames, settings.project.fileSettings);
     }
 
@@ -889,14 +926,15 @@ int CppCheckExecutor::check_internal(CppCheck& cppcheck, int /*argc*/, const cha
                 }
             }
         } else {
-
             // filesettings
-            c = 0;
+            // check all files of the project
             for (const ImportProject::FileSettings &fs : settings.project.fileSettings) {
                 returnValue += cppcheck.check(fs);
                 ++c;
                 if (!settings.quiet)
                     reportStatus(c, settings.project.fileSettings.size(), c, settings.project.fileSettings.size());
+                if (settings.clangTidy)
+                    cppcheck.analyseClangTidy(fs);
             }
         }
 
@@ -943,24 +981,24 @@ int CppCheckExecutor::check_internal(CppCheck& cppcheck, int /*argc*/, const cha
         cppcheck.tooManyConfigsError("",0U);
 
         if (settings.isEnabled(Settings::MISSING_INCLUDE) && (Preprocessor::missingIncludeFlag || Preprocessor::missingSystemIncludeFlag)) {
-            const std::list<ErrorLogger::ErrorMessage::FileLocation> callStack;
-            ErrorLogger::ErrorMessage msg(callStack,
-                                          emptyString,
-                                          Severity::information,
-                                          "Cppcheck cannot find all the include files (use --check-config for details)\n"
-                                          "Cppcheck cannot find all the include files. Cppcheck can check the code without the "
-                                          "include files found. But the results will probably be more accurate if all the include "
-                                          "files are found. Please check your project's include directories and add all of them "
-                                          "as include directories for Cppcheck. To see what files Cppcheck cannot find use "
-                                          "--check-config.",
-                                          Preprocessor::missingIncludeFlag ? "missingInclude" : "missingIncludeSystem",
-                                          false);
+            const std::list<ErrorMessage::FileLocation> callStack;
+            ErrorMessage msg(callStack,
+                             emptyString,
+                             Severity::information,
+                             "Cppcheck cannot find all the include files (use --check-config for details)\n"
+                             "Cppcheck cannot find all the include files. Cppcheck can check the code without the "
+                             "include files found. But the results will probably be more accurate if all the include "
+                             "files are found. Please check your project's include directories and add all of them "
+                             "as include directories for Cppcheck. To see what files Cppcheck cannot find use "
+                             "--check-config.",
+                             Preprocessor::missingIncludeFlag ? "missingInclude" : "missingIncludeSystem",
+                             false);
             reportInfo(msg);
         }
     }
 
     if (settings.xml) {
-        reportErr(ErrorLogger::ErrorMessage::getXMLFooter());
+        reportErr(ErrorMessage::getXMLFooter());
     }
 
     mSettings = nullptr;
@@ -1035,7 +1073,7 @@ void CppCheckExecutor::reportProgress(const std::string &filename, const char st
     }
 }
 
-void CppCheckExecutor::reportInfo(const ErrorLogger::ErrorMessage &msg)
+void CppCheckExecutor::reportInfo(const ErrorMessage &msg)
 {
     reportErr(msg);
 }
@@ -1052,7 +1090,7 @@ void CppCheckExecutor::reportStatus(std::size_t fileindex, std::size_t filecount
     }
 }
 
-void CppCheckExecutor::reportErr(const ErrorLogger::ErrorMessage &msg)
+void CppCheckExecutor::reportErr(const ErrorMessage &msg)
 {
     if (mShowAllErrors) {
         reportOut(msg.toXML());
@@ -1061,6 +1099,15 @@ void CppCheckExecutor::reportErr(const ErrorLogger::ErrorMessage &msg)
     } else {
         reportErr(msg.toString(mSettings->verbose, mSettings->templateFormat, mSettings->templateLocation));
     }
+}
+
+void CppCheckExecutor::bughuntingReport(const std::string &str)
+{
+    if (!mSettings || str.empty())
+        return;
+    if (!mBugHuntingReport)
+        mBugHuntingReport = new std::ofstream(mSettings->bugHuntingReport);
+    (*mBugHuntingReport) << str << std::endl;
 }
 
 void CppCheckExecutor::setExceptionOutput(FILE* exceptionOutput)
@@ -1080,39 +1127,76 @@ bool CppCheckExecutor::tryLoadLibrary(Library& destination, const char* basepath
     if (err.errorcode == Library::UNKNOWN_ELEMENT)
         std::cout << "cppcheck: Found unknown elements in configuration file '" << filename << "': " << err.reason << std::endl;
     else if (err.errorcode != Library::OK) {
-        std::string errmsg;
+        std::cout << "cppcheck: Failed to load library configuration file '" << filename << "'. ";
         switch (err.errorcode) {
         case Library::OK:
             break;
         case Library::FILE_NOT_FOUND:
-            errmsg = "File not found";
+            std::cout << "File not found";
             break;
         case Library::BAD_XML:
-            errmsg = "Bad XML";
+            std::cout << "Bad XML";
             break;
         case Library::UNKNOWN_ELEMENT:
-            errmsg = "Unexpected element";
+            std::cout << "Unexpected element";
             break;
         case Library::MISSING_ATTRIBUTE:
-            errmsg = "Missing attribute";
+            std::cout << "Missing attribute";
             break;
         case Library::BAD_ATTRIBUTE_VALUE:
-            errmsg = "Bad attribute value";
+            std::cout << "Bad attribute value";
             break;
         case Library::UNSUPPORTED_FORMAT:
-            errmsg = "File is of unsupported format version";
+            std::cout << "File is of unsupported format version";
             break;
         case Library::DUPLICATE_PLATFORM_TYPE:
-            errmsg = "Duplicate platform type";
+            std::cout << "Duplicate platform type";
             break;
         case Library::PLATFORM_TYPE_REDEFINED:
-            errmsg = "Platform type redefined";
+            std::cout << "Platform type redefined";
             break;
         }
         if (!err.reason.empty())
-            errmsg += " '" + err.reason + "'";
-        std::cout << "cppcheck: Failed to load library configuration file '" << filename << "'. " << errmsg << std::endl;
+            std::cout << " '" + err.reason + "'";
+        std::cout << std::endl;
         return false;
     }
     return true;
 }
+
+/**
+ * Execute a shell command and read the output from it. Returns true if command terminated successfully.
+ */
+// cppcheck-suppress passedByValue
+bool CppCheckExecutor::executeCommand(std::string exe, std::vector<std::string> args, std::string redirect, std::string *output)
+{
+    output->clear();
+
+    std::string joinedArgs;
+    for (const std::string &arg : args) {
+        if (!joinedArgs.empty())
+            joinedArgs += " ";
+        if (arg.find(" ") != std::string::npos)
+            joinedArgs += '"' + arg + '"';
+        else
+            joinedArgs += arg;
+    }
+
+#ifdef _WIN32
+    // Extra quoutes are needed in windows if filename has space
+    if (exe.find(" ") != std::string::npos)
+        exe = "\"" + exe + "\"";
+    const std::string cmd = exe + " " + joinedArgs + " " + redirect;
+    std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(cmd.c_str(), "r"), _pclose);
+#else
+    const std::string cmd = exe + " " + joinedArgs + " " + redirect;
+    std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd.c_str(), "r"), pclose);
+#endif
+    if (!pipe)
+        return false;
+    char buffer[1024];
+    while (fgets(buffer, sizeof(buffer), pipe.get()) != nullptr)
+        *output += buffer;
+    return true;
+}
+

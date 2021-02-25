@@ -25,11 +25,8 @@ def reportError(token, severity, msg, id):
         cppcheckdata.reportError(token, severity, msg, 'cert', id)
 
 def simpleMatch(token, pattern):
-    for p in pattern.split(' '):
-        if not token or token.str != p:
-            return False
-        token = token.next
-    return True
+    return cppcheckdata.simpleMatch(token, pattern)
+
 
 def isUnpackedStruct(token):
     if token.valueType is None:
@@ -317,6 +314,8 @@ def str05(data):
 # STR07-C
 # Use the bounds-checking interfaces for string manipulation
 def str07(data):
+    if(data.standards.c=='c89' or data.standards.c=='c99'):
+        return
     for token in data.tokenlist:
         if not isFunctionCall(token, ('strcpy', 'strcat')):
             continue
@@ -400,7 +399,7 @@ if __name__ == '__main__':
         if not args.quiet:
             print('Checking %s...' % dumpfile)
 
-        data = cppcheckdata.parsedump(dumpfile)
+        data = cppcheckdata.CppcheckData(dumpfile)
 
         if VERIFY:
             VERIFY_ACTUAL = []
@@ -411,8 +410,8 @@ if __name__ == '__main__':
                         if re.match(r'cert-[A-Z][A-Z][A-Z][0-9][0-9].*',word):
                             VERIFY_EXPECTED.append(str(tok.linenr) + ':' + word)
 
-        for cfg in data.configurations:
-            if (len(data.configurations) > 1) and (not args.quiet):
+        for cfg in data.iterconfigurations():
+            if not args.quiet:
                 print('Checking %s, config %s...' % (dumpfile, cfg.name))
             exp05(cfg)
             exp42(cfg)
@@ -437,3 +436,5 @@ if __name__ == '__main__':
                 if actual not in VERIFY_EXPECTED:
                     print('Not expected: ' + actual)
                     sys.exit(1)
+
+    sys.exit(cppcheckdata.EXIT_CODE)

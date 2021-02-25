@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,10 +21,12 @@
 #define utilsH
 //---------------------------------------------------------------------------
 
-#include <algorithm>
+#include "config.h"
+
 #include <cctype>
 #include <cstddef>
 #include <string>
+#include <vector>
 
 inline bool endsWith(const std::string &str, char c)
 {
@@ -47,9 +49,8 @@ inline static bool isPrefixStringCharLiteral(const std::string &str, char q, con
 
 inline static bool isStringCharLiteral(const std::string &str, char q)
 {
-    for (const std::string & p: {
-    "", "u8", "u", "U", "L"
-}) {
+    static const std::vector<std::string> suffixes{"", "u8", "u", "U", "L"};
+    for (const std::string & p: suffixes) {
         if (isPrefixStringCharLiteral(str, q, p))
             return true;
     }
@@ -97,18 +98,11 @@ inline static const char *getOrdinalText(int i)
     return "th";
 }
 
-inline static int caseInsensitiveStringCompare(const std::string &lhs, const std::string &rhs)
-{
-    if (lhs.size() != rhs.size())
-        return (lhs.size() < rhs.size()) ? -1 : 1;
-    for (unsigned int i = 0; i < lhs.size(); ++i) {
-        const int c1 = std::toupper(lhs[i]);
-        const int c2 = std::toupper(rhs[i]);
-        if (c1 != c2)
-            return (c1 < c2) ? -1 : 1;
-    }
-    return 0;
-}
+CPPCHECKLIB int caseInsensitiveStringCompare(const std::string& lhs, const std::string& rhs);
+
+CPPCHECKLIB bool isValidGlobPattern(const std::string& pattern);
+
+CPPCHECKLIB bool matchglob(const std::string& pattern, const std::string& name);
 
 #define UNUSED(x) (void)(x)
 

@@ -1,6 +1,6 @@
 /*
  * Cppcheck - A tool for static C/C++ code analysis
- * Copyright (C) 2007-2019 Cppcheck team.
+ * Copyright (C) 2007-2020 Cppcheck team.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +22,7 @@
 //---------------------------------------------------------------------------
 
 #include "config.h"
-#include "errorlogger.h"
+#include "errortypes.h"
 #include "tokenlist.h"
 
 #include <ctime>
@@ -36,6 +36,8 @@ class SymbolDatabase;
 class TimerResults;
 class Token;
 class TemplateSimplifier;
+class ErrorLogger;
+class Preprocessor;
 
 namespace simplecpp {
     class TokenList;
@@ -110,7 +112,7 @@ public:
     bool isScopeNoReturn(const Token *endScopeToken, bool *unknown = nullptr) const;
 
     bool createTokens(std::istream &code, const std::string& FileName);
-    void createTokens(const simplecpp::TokenList *tokenList);
+    void createTokens(simplecpp::TokenList&& tokenList);
 
     bool simplifyTokens1(const std::string &configuration);
     /**
@@ -167,7 +169,19 @@ public:
      * - All executable code.
      * - Unused types/variables/etc
      */
-    void simplifyHeaders();
+    void simplifyHeadersAndUnusedTemplates();
+
+    /**
+     * Remove extra "template" keywords that are not used by Cppcheck
+     */
+    void removeExtraTemplateKeywords();
+
+
+    /** Split up template right angle brackets.
+     * foo < bar < >> => foo < bar < > >
+     */
+    void splitTemplateRightAngleBrackets(bool check);
+
 
     /**
      * Deletes dead code between 'begin' and 'end'.
@@ -249,6 +263,9 @@ public:
     void removeMacrosInGlobalScope();
 
     void addSemicolonAfterUnknownMacro();
+
+    // Remove C99 and CPP11 _Pragma(str)
+    void removePragma();
 
     /** Remove undefined macro in class definition:
       * class DLLEXPORT Fred { };
@@ -365,6 +382,9 @@ public:
      *         or NULL when syntaxError is called
      */
     Token * simplifyAddBracesPair(Token *tok, bool commandWithCondition);
+
+    // Convert "using ...;" to corresponding typedef
+    void simplifyUsingToTypedef();
 
     /**
      * typedef A mytype;
@@ -556,6 +576,15 @@ public:
      */
     static const Token * isFunctionHead(const Token *tok, const std::string &endsWith, bool cpp);
 
+    void setPreprocessor(const Preprocessor *preprocessor) {
+        mPreprocessor = preprocessor;
+    }
+    const Preprocessor *getPreprocessor() const {
+        return mPreprocessor;
+    }
+
+    bool hasIfdef(const Token *start, const Token *end) const;
+
 private:
 
     /**
@@ -603,16 +632,16 @@ private:
 public:
 
     /** Syntax error */
-    void syntaxError(const Token *tok, const std::string &code = "") const;
+    NORETURN void syntaxError(const Token *tok, const std::string &code = "") const;
 
     /** Syntax error. Unmatched character. */
-    void unmatchedToken(const Token *tok) const;
+    NORETURN void unmatchedToken(const Token *tok) const;
 
     /** Syntax error. C++ code in C file. */
-    void syntaxErrorC(const Token *tok, const std::string &what) const;
+    NORETURN void syntaxErrorC(const Token *tok, const std::string &what) const;
 
     /** Warn about unknown macro(s), configuration is recommended */
-    void unknownMacroError(const Token *tok1) const;
+    NORETURN void unknownMacroError(const Token *tok1) const;
 
 private:
 
@@ -633,6 +662,9 @@ private:
      * to catch problems in simplifyTokenList1/2.
      */
     void validate() const;
+
+    /** Detect unknown macros and throw unknownMacro */
+    void reportUnknownMacros();
 
     /** Detect garbage code and call syntaxError() if found. */
     void findGarbageCode() const;
@@ -725,6 +757,9 @@ private:
      * operator = => operator=
      */
     void simplifyOperatorName();
+
+    /** simplify overloaded operators: 'obj(123)' => 'obj . operator() ( 123 )' */
+    void simplifyOverloadedOperators();
 
     /**
     * Remove [[attribute]] (C++11 and later) from TokenList
@@ -949,6 +984,8 @@ private:
     /** Tokenizer maxtime */
     const std::time_t mMaxTime;
 #endif
+
+    const Preprocessor *mPreprocessor;
 };
 
 /// @}
