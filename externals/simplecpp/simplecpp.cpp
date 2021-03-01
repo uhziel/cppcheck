@@ -684,6 +684,17 @@ void simplecpp::TokenList::readfile(std::istream &istr, const std::string &filen
             if (currentToken.size() < 2U)
                 return;
         }
+        else if ((currentToken == "region" || currentToken == "endregion")
+            && lastLine() == "# pragma") {
+            while (istr.good()) {
+                unsigned char nextChar = peekChar(istr, bom);
+                if (nextChar != '\r' && nextChar != '\n') {
+                    readChar(istr, bom);
+                } else {
+                    break;
+                }
+            }
+        }
 
         push_back(new Token(currentToken, location));
 
