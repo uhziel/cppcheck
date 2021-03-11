@@ -5403,6 +5403,34 @@ static void valueFlowFunctionDefaultParameter(TokenList *tokenlist, SymbolDataba
     }
 }
 
+static void valueFlowFunctionLibraryPossibleValueParameter(TokenList *tokenlist, SymbolDatabase* symboldatabase, ErrorLogger *errorLogger, const Settings *settings)
+{
+    if (!tokenlist->isCPP())
+        return;
+
+    for (const Scope* scope : symboldatabase->functionScopes) {
+        const Function* function = scope->function;
+        if (!function)
+            continue;
+        for (std::size_t argnr = 1; argnr <= function->argCount(); argnr++) {
+            const Variable* var = function->getArgumentVar(argnr-1);
+            if (var == nullptr) {
+                continue;
+            }
+            const Library::ArgumentChecks* argCheck = settings->library.getarg2(function->token, argnr);
+            if (argCheck == nullptr) {
+                continue;
+            }
+            if (!argCheck->maybenull) {
+                continue;
+            }
+            std::list<ValueFlow::Value> argvalues;
+            argvalues.push_back(ValueFlow::Value(0));
+            valueFlowInjectParameter(tokenlist, errorLogger, settings, var, scope, argvalues);
+        }
+    }
+}
+
 static bool isKnown(const Token * tok)
 {
     return tok && tok->hasKnownIntValue();
@@ -6590,6 +6618,7 @@ void ValueFlow::setValues(TokenList *tokenlist, SymbolDatabase* symboldatabase, 
         valueFlowFunctionReturn(tokenlist, errorLogger);
         valueFlowLifetime(tokenlist, symboldatabase, errorLogger, settings);
         valueFlowFunctionDefaultParameter(tokenlist, symboldatabase, errorLogger, settings);
+        valueFlowFunctionLibraryPossibleValueParameter(tokenlist, symboldatabase, errorLogger, settings);
         valueFlowUninit(tokenlist, symboldatabase, errorLogger, settings);
         if (tokenlist->isCPP()) {
             valueFlowSmartPointer(tokenlist, errorLogger, settings);

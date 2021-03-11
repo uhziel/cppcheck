@@ -254,6 +254,7 @@ public:
         ArgumentChecks() :
             notbool(false),
             notnull(false),
+            maybenull(false),
             notuninit(-1),
             formatstr(false),
             strz(false),
@@ -265,6 +266,7 @@ public:
 
         bool         notbool;
         bool         notnull;
+        bool         maybenull;
         int          notuninit;
         bool         formatstr;
         bool         strz;
@@ -498,6 +500,8 @@ public:
     enum class TypeCheck { def, check, suppress };
     TypeCheck getTypeCheck(const std::string &check, const std::string &typeName) const;
 
+    const ArgumentChecks * getarg2(const Token *ftok, int argnr) const;
+
 private:
     // load a <function> xml node
     Error loadFunction(const tinyxml2::XMLElement * const node, const std::string &name, std::set<std::string> &unknown_elements);
@@ -581,7 +585,7 @@ private:
     std::map<std::pair<std::string,std::string>, TypeCheck> mTypeChecks;
 
     const ArgumentChecks * getarg(const Token *ftok, int argnr) const;
-
+    
     std::string getFunctionName(const Token *ftok, bool *error) const;
 
     static const AllocFunc* getAllocDealloc(const std::map<std::string, AllocFunc> &data, const std::string &name) {

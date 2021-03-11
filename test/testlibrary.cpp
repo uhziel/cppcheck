@@ -243,6 +243,7 @@ private:
                                "    <arg nr=\"3\"><formatstr/></arg>\n"
                                "    <arg nr=\"4\"><strz/></arg>\n"
                                "    <arg nr=\"5\" default=\"0\"><not-bool/></arg>\n"
+                               "    <arg nr=\"6\"><maybe-null/></arg>\n"
                                "  </function>\n"
                                "</def>";
 
@@ -255,6 +256,7 @@ private:
         ASSERT_EQUALS(false, library.functions["foo"].argumentChecks[4].optional);
         ASSERT_EQUALS(true, library.functions["foo"].argumentChecks[5].notbool);
         ASSERT_EQUALS(true, library.functions["foo"].argumentChecks[5].optional);
+        ASSERT_EQUALS(true, library.functions["foo"].argumentChecks[6].maybenull);
     }
 
     void function_arg_any() const {

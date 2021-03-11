@@ -710,6 +710,8 @@ Library::Error Library::loadFunction(const tinyxml2::XMLElement * const node, co
                     ac.notbool = true;
                 else if (argnodename == "not-null")
                     ac.notnull = true;
+                else if (argnodename == "maybe-null")
+                    ac.maybenull = true;
                 else if (argnodename == "not-uninit")
                     ac.notuninit = indirect;
                 else if (argnodename == "formatstr")
@@ -1199,6 +1201,22 @@ bool Library::isNotLibraryFunction2(const Token *ftok) const
 		return true;
 
 	return !matchArguments(ftok, getFunctionName(ftok));
+}
+
+const Library::ArgumentChecks * Library::getarg2(const Token *ftok, int argnr) const
+{
+    if (isNotLibraryFunction2(ftok))
+        return nullptr;
+    const std::map<std::string, Function>::const_iterator it1 = functions.find(getFunctionName(ftok));
+    if (it1 == functions.cend())
+        return nullptr;
+    const std::map<int, ArgumentChecks>::const_iterator it2 = it1->second.argumentChecks.find(argnr);
+    if (it2 != it1->second.argumentChecks.cend())
+        return &it2->second;
+    const std::map<int, ArgumentChecks>::const_iterator it3 = it1->second.argumentChecks.find(-1);
+    if (it3 != it1->second.argumentChecks.cend())
+        return &it3->second;
+    return nullptr;
 }
 
 bool Library::matchArguments(const Token *ftok, const std::string &functionName) const
