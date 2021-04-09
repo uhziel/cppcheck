@@ -549,7 +549,7 @@ namespace {
         std::string condition;
         std::string preprocessorDefinitions;
         std::string additionalIncludePaths;
-        Standards::cppstd_t cppstd = Standards::CPPLatest;
+        Standards::cppstd_t cppstd = Standards::CPP03;
     };
 }
 
