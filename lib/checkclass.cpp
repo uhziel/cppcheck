@@ -235,9 +235,9 @@ void CheckClass::constructors()
                             func.functionScope->bodyStart->link() == func.functionScope->bodyStart->next()) {
                             // don't warn about user defined default constructor when there are other constructors
                             if (printInconclusive)
-                                uninitVarError(func.token, func.access == AccessControl::Private, func.type, scope->className, var.name(), true);
+                                uninitVarError(func.token, func.access == AccessControl::Private, func.type, scope->className, &var, true);
                         } else
-                            uninitVarError(func.token, func.access == AccessControl::Private, func.type, scope->className, var.name(), inconclusive);
+                            uninitVarError(func.token, func.access == AccessControl::Private, func.type, scope->className, &var, inconclusive);
                     }
                 }
             }
@@ -917,14 +917,25 @@ void CheckClass::noExplicitConstructorError(const Token *tok, const std::string 
     reportError(tok, Severity::style, "noExplicitConstructor", "$symbol:" + classname + '\n' + message + '\n' + verbose, CWE398, false);
 }
 
-void CheckClass::uninitVarError(const Token *tok, bool isprivate, Function::Type functionType, const std::string &classname, const std::string &varname, bool inconclusive)
+void CheckClass::uninitVarError(const Token *tok, bool isprivate, Function::Type functionType, const std::string &classname, const Variable *var, bool inconclusive)
 {
     std::string message;
     if ((functionType == Function::eCopyConstructor || functionType == Function::eMoveConstructor) && inconclusive)
         message = "Member variable '$symbol' is not assigned in the copy constructor. Should it be copied?";
     else
         message = "Member variable '$symbol' is not initialized in the constructor.";
-    reportError(tok, Severity::warning, isprivate ? "uninitMemberVarPrivate" : "uninitMemberVar", "$symbol:" + classname + "::" + varname + "\n" + message, CWE398, inconclusive);
+
+    if (tok == nullptr || var == nullptr)
+    {
+        const std::string varName = isprivate ? "varnamepriv" : "varname";
+        reportError(nullptr, Severity::warning, isprivate ? "uninitMemberVarPrivate" : "uninitMemberVar", "$symbol:" + classname + "::" + varName + "\n" + message, CWE398, inconclusive);
+        return;
+    }
+
+    ErrorPath errorPath;
+    errorPath.emplace_back(tok, "the constructor");
+    errorPath.emplace_back(var->nameToken(), "the variable");
+    reportError(errorPath, Severity::warning, isprivate ? "uninitMemberVarPrivate" : "uninitMemberVar", "$symbol:" + classname + "::" + var->name() + "\n" + message, CWE398, inconclusive);
 }
 
 void CheckClass::operatorEqVarError(const Token *tok, const std::string &classname, const std::string &varname, bool inconclusive)
