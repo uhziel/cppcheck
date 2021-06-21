@@ -56,6 +56,7 @@ public:
         checkAutoVariables.assignFunctionArg();
         checkAutoVariables.checkVarLifetime();
         checkAutoVariables.autoVariables();
+        checkAutoVariables.startTaskAutoVar();
     }
 
     /** assign function argument */
@@ -63,6 +64,8 @@ public:
 
     /** Check auto variables */
     void autoVariables();
+
+    void startTaskAutoVar();
 
     /**
      * Check variable assignment.. value must be changed later or there will be a error reported
@@ -91,6 +94,7 @@ private:
     void errorReturnAddressOfFunctionParameter(const Token *tok, const std::string &varname);
     void errorUselessAssignmentArg(const Token *tok);
     void errorUselessAssignmentPtrArg(const Token *tok);
+    void errorStartTaskAutoVar(const Token *tok);
 
     void getErrorMessages(ErrorLogger *errorLogger, const Settings *settings) const OVERRIDE {
         ErrorPath errorPath;
@@ -110,6 +114,7 @@ private:
         c.errorInvalidLifetime(nullptr, nullptr);
         c.errorDanglngLifetime(nullptr, nullptr);
         c.errorDanglingTemporaryLifetime(nullptr, nullptr);
+        c.errorStartTaskAutoVar(nullptr);
     }
 
     static std::string myName() {

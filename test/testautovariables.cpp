@@ -149,6 +149,7 @@ private:
 		TEST_CASE(danglingTemporaryLifetime2);
         TEST_CASE(invalidLifetime);
         TEST_CASE(deadPointer);
+        TEST_CASE(startTaskAutoVar);
     }
 
 
@@ -3100,6 +3101,13 @@ private:
         ASSERT_EQUALS("[test.cpp:5] -> [test.cpp:4] -> [test.cpp:8]: (error) Using pointer to local variable 'x' that is out of scope.\n", errout.str());
     }
 
+    void startTaskAutoVar() {
+        check("void f() {\n"
+            "  int i = 0;\n"
+            "  START_TASK_IMP(1, 2, &i);\n"
+            "}");
+        ASSERT_EQUALS("[test.cpp:3]: (error) Address of local auto-variable assigned to the function START_TASK().\n", errout.str());
+    }
 };
 
 REGISTER_TEST(TestAutoVariables)

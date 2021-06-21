@@ -292,6 +292,45 @@ void CheckAutoVariables::autoVariables()
     }
 }
 
+void CheckAutoVariables::startTaskAutoVar()
+{
+    const bool printInconclusive = mSettings->inconclusive;
+    const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
+    for (const Scope * scope : symbolDatabase->functionScopes) {
+        for (const Token *tok = scope->bodyStart; tok && tok != scope->bodyEnd; tok = tok->next()) {
+            // Skip lambda..
+            if (const Token *lambdaEndToken = findLambdaEndToken(tok)) {
+                tok = lambdaEndToken;
+                continue;
+            }
+
+            if (!Token::Match(tok, "START_TASK_IMP ( !!)")) {
+                continue;
+            }
+
+            const Token *argument = tok->tokAt(2);
+
+            int curArg = 0;
+            while (argument) {
+                ++curArg;
+                if (curArg > 2) {
+                    for (const ValueFlow::Value &v : argument->values()) {
+                        if (!v.isLifetimeValue())
+                            continue;
+                        if (v.lifetimeKind == ValueFlow::Value::LifetimeKind::Address &&
+                            v.lifetimeScope == ValueFlow::Value::LifetimeScope::Local) {
+                            errorStartTaskAutoVar(argument);
+                        }
+                    }
+                }
+                argument = argument->nextArgument();
+            }
+
+            tok = tok->tokAt(1)->link();
+        }
+    }
+}
+
 bool CheckAutoVariables::checkAutoVariableAssignment(const Token *expr, bool inconclusive, const Token *startToken)
 {
     if (!startToken)
@@ -389,6 +428,12 @@ void CheckAutoVariables::errorUselessAssignmentPtrArg(const Token *tok)
                 Severity::warning,
                 "uselessAssignmentPtrArg",
                 "Assignment of function parameter has no effect outside the function. Did you forget dereferencing it?", CWE398, false);
+}
+
+void CheckAutoVariables::errorStartTaskAutoVar(const Token *tok)
+{
+    reportError(tok, Severity::error, "startTaskAutoVar",
+        "Address of local auto-variable assigned to the function START_TASK().", CWE(0U), false);
 }
 
 //---------------------------------------------------------------------------
