@@ -3107,6 +3107,62 @@ private:
             "  START_TASK_IMP(1, 2, &i);\n"
             "}");
         ASSERT_EQUALS("[test.cpp:3]: (error) Address of local auto-variable assigned to the function START_TASK().\n", errout.str());
+
+        check("int i = 0;\n"
+            "void f() {\n"
+            "  START_TASK_IMP(1, 2, &i);\n"
+            "}");
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f() {\n"
+            "  static int i = 0;\n"
+            "  START_TASK_IMP(1, 2, &i);\n"
+            "}");
+        ASSERT_EQUALS("", errout.str());
+
+        check("void f(int i) {\n"
+            "  START_TASK_IMP(1, 2, &i);\n"
+            "}");
+        ASSERT_EQUALS("[test.cpp:2]: (error) Address of local auto-variable assigned to the function START_TASK().\n", errout.str());
+
+        check("void f() {\n"
+            "  int arr[10];\n"
+            "  START_TASK_IMP(1, 2, arr);\n"
+            "}");
+        ASSERT_EQUALS("[test.cpp:3]: (error) Address of local auto-variable assigned to the function START_TASK().\n", errout.str());
+
+        check("void f() {\n"
+            "  int arr[10];\n"
+            "  START_TASK_IMP(1, 2, &arr[2]);\n"
+            "}");
+        ASSERT_EQUALS("[test.cpp:3]: (error) Address of local auto-variable assigned to the function START_TASK().\n", errout.str());
+
+        check("std::string hello();\n"
+            "void f() {\n"
+            "  START_TASK_IMP(1, 2, &hello());\n"
+            "}");
+        ASSERT_EQUALS("[test.cpp:3]: (error) Address of local auto-variable assigned to the function START_TASK().\n", errout.str());
+
+        check("int b();\n"
+            "void f() {\n"
+            "  int& x = b();\n"
+            "  START_TASK_IMP(1, 2, &x);\n"
+            "}");
+        ASSERT_EQUALS(
+            "[test.cpp:3] -> [test.cpp:4] -> [test.cpp:4]: (error) Using pointer to temporary.\n"
+            "[test.cpp:3] -> [test.cpp:4]: (error) Using reference to dangling temporary.\n"
+            "[test.cpp:4]: (error) Address of local auto-variable assigned to the function START_TASK().\n"
+            , errout.str());
+
+        check("int b();\n"
+            "void f() {\n"
+            "  int* x = &(b());\n"
+            "  START_TASK_IMP(1, 2, x);\n"
+            "}");
+        ASSERT_EQUALS(
+            "[test.cpp:3] -> [test.cpp:4]: (error) Using pointer to temporary.\n"
+            "[test.cpp:4]: (error) Address of local auto-variable assigned to the function START_TASK().\n"
+            , errout.str());
     }
 };
 

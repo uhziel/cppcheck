@@ -314,12 +314,26 @@ void CheckAutoVariables::startTaskAutoVar()
             while (argument) {
                 ++curArg;
                 if (curArg > 2) {
-                    for (const ValueFlow::Value &v : argument->values()) {
-                        if (!v.isLifetimeValue())
-                            continue;
-                        if (v.lifetimeKind == ValueFlow::Value::LifetimeKind::Address &&
-                            v.lifetimeScope == ValueFlow::Value::LifetimeScope::Local) {
-                            errorStartTaskAutoVar(argument);
+                    if (isAddressOfLocalVariable(argument)) {
+                        errorStartTaskAutoVar(argument);
+                    }
+                    else if (isAutoVarArray(argument)) {
+                        errorStartTaskAutoVar(argument);
+                    }
+                    else {
+                        for (const ValueFlow::Value &v : argument->values()) {
+                            if (!printInconclusive && v.isInconclusive())
+                                continue;
+                            if (!v.isLocalLifetimeValue())
+                                continue;
+                            if (v.lifetimeKind != ValueFlow::Value::LifetimeKind::Address)
+                                continue;
+
+                            const Variable* var = v.tokvalue->variable();
+                            if (!var || (!var->isStatic() && !var->isGlobal())) {
+                                errorStartTaskAutoVar(argument);
+                                break;
+                            }
                         }
                     }
                 }
