@@ -3108,6 +3108,17 @@ private:
             "}");
         ASSERT_EQUALS("[test.cpp:3]: (error) Address of local auto-variable assigned to the function START_TASK().\n", errout.str());
 
+        check("void f() {\n"
+            "  int i = 0;\n"
+            "  int j = 0;\n"
+            "  START_TASK_IMP(1, 2, &i,\n"
+            "      &j);\n"
+            "}");
+        ASSERT_EQUALS(
+            "[test.cpp:4]: (error) Address of local auto-variable assigned to the function START_TASK().\n"
+            "[test.cpp:5]: (error) Address of local auto-variable assigned to the function START_TASK().\n"
+            , errout.str());
+
         check("int i = 0;\n"
             "void f() {\n"
             "  START_TASK_IMP(1, 2, &i);\n"
