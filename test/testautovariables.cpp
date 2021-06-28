@@ -3102,6 +3102,24 @@ private:
     }
 
     void startTaskAutoVar() {
+        check("struct Bar {\n"
+            "    int m_int;\n"
+            "};\n"
+            "\n"
+            "class Foo {\n"
+            "private:\n"
+            "    std::vector<Bar*> m_vec;\n"
+            "public:\n"
+            "    void f() {\n"
+            "        for (std::vector<Bar*>::iterator it = m_vec.begin();\n"
+            "            it != m_vec.end(); it++) {\n"
+            "                Bar* bar = *it;\n"
+            "                START_TASK_IMP(1, 2, &bar->m_int);\n"
+            "            }\n"
+            "    }\n"
+            "};\n");
+        ASSERT_EQUALS("", errout.str());
+
         check("void f() {\n"
             "  int i = 0;\n"
             "  START_TASK_IMP(1, 2, &i);\n"

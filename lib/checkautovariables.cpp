@@ -183,6 +183,52 @@ static bool isAddressOfLocalVariable(const Token *expr)
     return false;
 }
 
+static bool isAddressOfArg(const Token *expr)
+{
+    if (!expr)
+        return false;
+    if (Token::Match(expr, "+|-"))
+        return isAddressOfArg(expr->astOperand1()) || isAddressOfArg(expr->astOperand2());
+    if (expr->isCast())
+        return isAddressOfArg(expr->astOperand2() ? expr->astOperand2() : expr->astOperand1());
+    if (expr->isUnaryOp("&")) {
+        const Token *op = expr->astOperand1();
+        bool deref = false;
+        while (Token::Match(op, ".|[")) {
+            if (op->originalName() == "->")
+                return false;
+            if (op->str() == "[")
+                deref = true;
+            op = op->astOperand1();
+        }
+        return op && isNonReferenceArg(op) && (!deref || !op->variable()->isPointer());
+    }
+    return false;
+}
+
+static bool isAddressOfTemporary(bool cpp, const Token *expr, const Library* library)
+{
+    if (!expr)
+        return false;
+    if (Token::Match(expr, "+|-"))
+        return isAddressOfArg(expr->astOperand1()) || isAddressOfArg(expr->astOperand2());
+    if (expr->isCast())
+        return isAddressOfArg(expr->astOperand2() ? expr->astOperand2() : expr->astOperand1());
+    if (expr->isUnaryOp("&")) {
+        const Token *op = expr->astOperand1();
+        bool deref = false;
+        while (Token::Match(op, ".|[")) {
+            if (op->originalName() == "->")
+                return false;
+            if (op->str() == "[")
+                deref = true;
+            op = op->astOperand1();
+        }
+        return op && isTemporary(cpp, op, library) && (!deref || !op->variable()->isPointer());
+    }
+    return false;
+}
+
 static bool variableIsUsedInScope(const Token* start, nonneg int varId, const Scope *scope)
 {
     if (!start) // Ticket #5024
@@ -292,58 +338,6 @@ void CheckAutoVariables::autoVariables()
     }
 }
 
-void CheckAutoVariables::startTaskAutoVar()
-{
-    const bool printInconclusive = mSettings->inconclusive;
-    const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
-    for (const Scope * scope : symbolDatabase->functionScopes) {
-        for (const Token *tok = scope->bodyStart; tok && tok != scope->bodyEnd; tok = tok->next()) {
-            // Skip lambda..
-            if (const Token *lambdaEndToken = findLambdaEndToken(tok)) {
-                tok = lambdaEndToken;
-                continue;
-            }
-
-            if (!Token::Match(tok, "START_TASK_IMP ( !!)")) {
-                continue;
-            }
-
-            const Token *argument = tok->tokAt(2);
-
-            int curArg = 0;
-            while (argument) {
-                ++curArg;
-                if (curArg > 2) {
-                    if (isAddressOfLocalVariable(argument)) {
-                        errorStartTaskAutoVar(argument);
-                    }
-                    else if (isAutoVarArray(argument)) {
-                        errorStartTaskAutoVar(argument);
-                    }
-                    else {
-                        for (const ValueFlow::Value &v : argument->values()) {
-                            if (!printInconclusive && v.isInconclusive())
-                                continue;
-                            if (!v.isLocalLifetimeValue())
-                                continue;
-                            if (v.lifetimeKind != ValueFlow::Value::LifetimeKind::Address)
-                                continue;
-
-                            const Variable* var = v.tokvalue->variable();
-                            if (!var || (!var->isStatic() && !var->isGlobal())) {
-                                errorStartTaskAutoVar(argument);
-                                break;
-                            }
-                        }
-                    }
-                }
-                argument = argument->nextArgument();
-            }
-
-            tok = tok->tokAt(1)->link();
-        }
-    }
-}
 
 bool CheckAutoVariables::checkAutoVariableAssignment(const Token *expr, bool inconclusive, const Token *startToken)
 {
@@ -739,6 +733,74 @@ void CheckAutoVariables::checkVarLifetime()
         if (!scope->function)
             continue;
         checkVarLifetimeScope(scope->bodyStart, scope->bodyEnd);
+    }
+}
+
+void CheckAutoVariables::startTaskAutoVar()
+{
+    const bool printInconclusive = mSettings->inconclusive;
+    const SymbolDatabase *symbolDatabase = mTokenizer->getSymbolDatabase();
+    for (const Scope * scope : symbolDatabase->functionScopes) {
+        for (const Token *tok = scope->bodyStart; tok && tok != scope->bodyEnd; tok = tok->next()) {
+            // Skip lambda..
+            if (const Token *lambdaEndToken = findLambdaEndToken(tok)) {
+                tok = lambdaEndToken;
+                continue;
+            }
+
+            if (!Token::Match(tok, "START_TASK_IMP ( !!)")) {
+                continue;
+            }
+
+            const Token *argument = tok->tokAt(2);
+
+            int curArg = 0;
+            while (argument) {
+                ++curArg;
+                if (curArg > 2) {
+                    if (isAddressOfLocalVariable(argument)) {
+                        errorStartTaskAutoVar(argument);
+                    }
+                    else if (isAutoVarArray(argument)) {
+                        errorStartTaskAutoVar(argument);
+                    }
+                    else if (isAddressOfArg(argument)) {
+                        errorStartTaskAutoVar(argument);
+                    }
+                    else if (isAddressOfTemporary(mTokenizer->isCPP(), argument, &mSettings->library )) {
+                        errorStartTaskAutoVar(argument);
+                    }
+                    else {
+                        for (const ValueFlow::Value &v : argument->values()) {
+                            if (!printInconclusive && v.isInconclusive())
+                                continue;
+                            if (!v.isLocalLifetimeValue())
+                                continue;
+                            if (v.lifetimeKind != ValueFlow::Value::LifetimeKind::Address)
+                                continue;
+
+                            for (const LifetimeToken& lt : getLifetimeTokens(getParentLifetime(v.tokvalue), false)) {
+                                const Token * tokvalue = lt.token;
+                                if (!tokvalue->variable() &&
+                                    isDeadTemporary(mTokenizer->isCPP(), tokvalue, argument, &mSettings->library)) {
+                                    errorStartTaskAutoVar(argument);
+                                    break;
+                                }
+                            }
+
+                            /*const Variable* var = v.tokvalue->variable();
+                            if (var && (!var->isStatic() && !var->isGlobal())) {
+                                errorStartTaskAutoVar(argument);
+                                break;
+                            }*/
+                        }
+                    }
+                }
+                argument = argument->nextArgument();
+            }
+
+            tok = tok->tokAt(1)->link();
+        }
     }
 }
 
